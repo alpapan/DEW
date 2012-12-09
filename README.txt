@@ -1,9 +1,14 @@
+Digital Expression on the Web 
+
 This repository is for CSIRO use only; please don't distribute outside without asking
 
 KangaDE is from Stephen Stuart CPI; DEW works with committed version
 get latest public version from http://code.google.com/p/biokanga
 
-Author and recipient of complaints
+Express is from bio.math.berkeley.edu/eXpress
+
+
+DEW Author and recipient of complaints
 
  Alexie Papanicolaou
 

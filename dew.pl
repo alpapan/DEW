@@ -82,21 +82,22 @@ test times:
             'bamtools_exec:s'       => Executable to bamtools if not in your path
             'uid:s'                 => A uid for naming output files. Optional, otherwise generate
             'threads:i'             => Number of CPUs to use for alignment. BWA has no advantage over 4 threads
-            'library_name_file:s'   => An tag value tab delimited file (filename/alias) for giving a friendly alias for each readset library. needs a header line to describe columns.
+            'library_name_file:s'   => An tag value tab delimited file (filename/alias) for giving a friendly alias for each readset library. Needs a header line to describe columns. Only include -1read files.
             'median_cutoff:i'       => Median number of hits across reference must be above cutoff
             'need_all_readsets'     => All sets of reads must have alignments against the gene in order for it to be processed. Otherwise, 1+ is sufficient. 
             'over'                  => Allow overwriting of any files with the same name
-            'nographs'              => Do not produce any graphs. Graphs can take a very long time when there are many readsets (e.g. 30+ libraries and 30k+ genes)
+            'nographs'              => Do not produce any graphs. Graphs can take a very long time when there are many readsets (e.g. 30+ libraries and 30k+ genes). Also there is a memory leak somewhere...
+            'gene_graphs_only'      =>  The opposite of above; only do enough work to get the gene depth/coverage graphs and then exit
             'contextual'            => Complete realignment of all genes in order to run a correction of biases properly. Does not read/store data in the cache
             'use_bwa'               => Use BWA instead of Bowtie2
             'correct_bias'          => Use eXpress to correct Illumina sequencing biases and transcript isofrm assignments. Increases runtime. Use -contextual for accuracy 
-	    'prepare_only'	    => Quit after post-processing readsets and writing initial DB
-	    'seeddb:s'              => Initialize database using this database file (e.g. after -prepare_only)
-	    'kanga'                 => Experimental:  use kanga
-	    'existing_aln:s{1,}'    => Experimental: use existing bam (read name sorted)
-	    'resume'		    => Load existing data from database and do not reprocess existing readsets (good for adding new readsets even with contextual. NB assumes same FASTA input so DO NOT use if you changed the FASTA reference gene file)
-	    'no_kangade|nokangade'  => Do not use kangade to process pairwise libraries
-	    'db_use_file'	    => Use file for SQL database rather than system memory (much slower but possible to analyze larger datasets)
+	        'prepare_only'	    => Quit after post-processing readsets and writing initial DB
+	        'seeddb:s'              => Initialize database using this database file (e.g. after -prepare_only)
+	        'kanga'                 => Experimental:  use kanga
+	        'existing_aln:s{1,}'    => Experimental: use existing bam (read name sorted)
+	        'resume'		    => Load existing data from database and do not reprocess existing readsets (good for adding new readsets even with contextual. NB assumes same FASTA input so DO NOT use if you changed the FASTA reference gene file)
+	        'no_kangade|nokangade'  => Do not use kangade to process pairwise libraries
+	        'db_use_file'	    => Use file for SQL database rather than system memory (much slower but possible to analyze larger datasets)
 
 =head1 AUTHORS
 
@@ -117,7 +118,10 @@ is prohibited under the current license.
 
 =head1 BUGS & LIMITATIONS
 
+Making of BioPerl graphs has a memory leak somewhere...
+
 See TODO, otherwise none other known so far but probably lots
+
 
 =head1 TODO
 
