@@ -99,6 +99,8 @@ test times:
 	        'db_use_file'	    => Use file for SQL database rather than system memory (much slower but possible to analyze larger datasets)
 	        'dispersion'		=> For edgeR: if we have replicates, dispersion can be set to auto. otherwise set it to a float such as 0.1 (def)
 	        'fdr_cutof'			=> Cut off FDR for DE as float (0.001 def.)
+	        'cpm_cutoff'     => Cut off counts-per-million for parsing alignments to edgeR (def 2)
+	        'library_cutoff'    => Number of libraries that need to have cpm_cutoff to keep alignment (def 1)
 
 =head1 AUTHORS
 
@@ -155,6 +157,7 @@ low:  for end-user beta tester
   Major: kangar are very large so no benefit but does not accept any compressed format (bz2, bam etc);  Major: huge amounts of memory needed
 
 =cut
+
 use strict;
 use Pod::Usage;
 use Getopt::Long;
@@ -231,9 +234,9 @@ if ($ps2pdf_exec) {
 }
 
 # TODO If there exist a sizeable number of housekeeping transcripts that should not be DE, the the dispersion could be estimated from them.
-
 my $edgeR_dispersion       = 0.4;
-
+my $minCPM                 = 2;
+my $minLibs                = 1;
 my $fdr_pval_cutoff        = 0.001;
 my $tree_clusters          = 10;
 my $read_format            = 'fastq';
@@ -286,7 +289,9 @@ GetOptions(
   'db_use_file'          => \$db_use_file,
   'gene_graphs_only'     => \$gene_graphs_only,
   'dispersion:s'         => \$edgeR_dispersion,          #auto for bio.reps
-  'fdr_cutoff:f'         => \$fdr_pval_cutoff
+  'fdr_cutoff:f'         => \$fdr_pval_cutoff,
+  'cpm_cutoff'           => \$minCPM,
+  'library_cutoff'          => \$minLibs
 );
 my $bunzip2_exec = `which pbzip2`;
 chomp($bunzip2_exec);
@@ -457,7 +462,7 @@ sub sqlite_init() {
     $dbh->do(
             "CREATE TABLE sequence_aliases (seq_md5hash char(32), alias text)");
     $dbh->do(
-         "CREATE INDEX sequence_aliases_idx ON sequence_aliases(seq_md5hash)" );
+          "CREATE INDEX sequence_aliases_idx ON sequence_aliases(seq_md5hash)");
     $dbh->do(
 "CREATE TABLE readsets (readset_id INTEGER PRIMARY KEY,readset_file varchar(255),total_reads integer, is_paired boolean, alias varchar(255), ctime timestamp)"
     );
@@ -2130,7 +2135,7 @@ sub perform_correct_bias($$$) {
     mkdir($express_dir) unless -d $express_dir;
     if ($use_bwa) {
       &process_cmd(
-         "$samtools_exec sort -n -m 18000000000 $original_bam $namesorted_sam" )
+          "$samtools_exec sort -n -m 18000000000 $original_bam $namesorted_sam")
         unless -s $namesorted_bam;
       if ($contextual_alignment) {
         &process_cmd(
@@ -2834,6 +2839,7 @@ sub process_housekeeping_stats() {
  
  
 =cut
+
 }
 
 sub process_completion() {
@@ -2864,7 +2870,7 @@ sub perform_TMM_normalization_edgeR() {
   my $matrix_base = basename($matrix_file);
   my $TMM_file    = $edgeR_dir . 'TMM_info.txt';
 
- # AP: accounting for groups (column 2 [1] in target.files and TMM_info.txt files)
+# AP: accounting for groups (column 2 [1] in target.files and TMM_info.txt files)
   my ( $fpkm_TMM_matrix_file, %trans_lengths );
   unless ( -s $TMM_file ) {
 
@@ -3410,6 +3416,7 @@ deseq script from Robles/Alexie
     ';
 
 =cut
+
 ####
 sub run_TMM {
 
@@ -3430,15 +3437,15 @@ sub run_TMM {
   my $tmm_norm_script = $edgeR_dir . "tmp_runTMM.R";
   open( OUT2, ">$tmm_norm_script" )
     or die "Error, cannot write to $tmm_norm_script";
-    # TODO using minimum CPM/replicates
+
+  # TODO using minimum CPM/replicates
   print OUT2 "
   source('$RealBin/R/edgeR_funcs.R')
-  TMM_normalize('$data_file_list',2,1,'$output')
+  TMM_normalize('$data_file_list',$minCPM,$minLibs,'$output')
     ";
   close OUT2;
   &process_cmd( "R --vanilla --slave -f $tmm_norm_script >/dev/null",
                 $edgeR_dir );
-
   unless ( -s $output ) {
     print LOG "TMM normalization failed.\n";
     die "TMM normalization failed.\n";
@@ -3475,7 +3482,7 @@ sub run_edgeR {
   open( OUTR, ">$R_script" ) or die "Error, cannot write $R_script: $!";
   print OUTR "
   source('$RealBin/R/edgeR_funcs.R')
-  edgeR_DE_analysis_explore(targetsFile='$target_file',datafile='$base' ,dispersion=$edgeR_dispersion,FDR=$fdr_pval_cutoff,kclusters=$tree_clusters);
+  edgeR_DE_explore('$target_file','$base',$edgeR_dispersion,$fdr_pval_cutoff,$tree_clusters,$minCPM,$minLibs);
   ";
   close OUTR;
   &process_cmd( "R --vanilla --slave -f $R_script >/dev/null 2>/dev/null",

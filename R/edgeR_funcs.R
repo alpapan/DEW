@@ -12,7 +12,7 @@ normalize = function(x){
 	}
 }
 
-TMM_normalize = function(targetsFile, minCPM = 2,minReps = 1,outfile='') {
+TMM_normalize = function(targetsFile, minCPM = 2,minLibs = 1,outfile='') {
 	library(edgeR,quietly=T,warn.conflicts=F,verbose=F)	
 	# format should be like so, including header:
 #   files	group	description
@@ -30,8 +30,8 @@ TMM_normalize = function(targetsFile, minCPM = 2,minReps = 1,outfile='') {
 	}
 	
 	# only use those rows that have a minimum number of tags (min to be DE)
-	#TODO actually use minReps in perl script.
-	DGEList<-DGEList[rowSums(cpm(DGEList) >= minCPM) >= minReps,]
+	#TODO actually use minLibs in perl script.
+	DGEList<-DGEList[rowSums(cpm(DGEList) > minCPM) >= minLibs,]
 	
 	# reset library sizes
 	DGEList$samples$lib.size = colSums(DGEList$counts)
@@ -47,7 +47,7 @@ TMM_normalize = function(targetsFile, minCPM = 2,minReps = 1,outfile='') {
 	DGEList$logCPM <- log2(1+DGEList$CPM)
 	
 	# just in case normalization really changed things
-	DGEList<-DGEList[rowSums(DGEList$CPM >= minCPM) >= minReps,]
+	DGEList<-DGEList[rowSums(DGEList$CPM >= minCPM) >= minLibs,]
 	
 	if (!is.null(outfile)){
 		unlink(outfile)
@@ -57,13 +57,13 @@ TMM_normalize = function(targetsFile, minCPM = 2,minReps = 1,outfile='') {
 }
 
 # TODO split between those with reps and without reps
-edgeR_DE_analysis_explore = function (targetsFile, datafile='tmp', dispersion='auto', FDR=0.05,kclusters = 10,minCPM = 2,minReps = 1){
+edgeR_DE_explore = function (targetsFile, baseout='tmp', dispersion='auto', FDR=0.05,kclusters = 10,minCPM = 2,minLibs = 1){
 	library(edgeR,quietly=T,warn.conflicts=F,verbose=F)
-	DGEList = TMM_normalize(targetsFile,minCPM,minReps )
+	DGEList = TMM_normalize(targetsFile,minCPM,minLibs )
 	if (length(DGEList)==0){return}
 	
 	if (length(DGEList$factors_to_do) == 0){
-		pdf(file=paste(datafile,'.qc_graphs.pdf',sep=''))
+		pdf(file=paste(baseout,'.qc_graphs.pdf',sep=''))
 		plotMDS(DGEList, main="Biological Co-efficient of Variation distance MDS plot");
 		plotMDS(DGEList$logCPM, main="Counts per million distance MDS plot")
 		if (dispersion == 'auto'){
@@ -76,10 +76,10 @@ edgeR_DE_analysis_explore = function (targetsFile, datafile='tmp', dispersion='a
 		dev.off()
 			cat ("Processing one factor using CML\n");
 			de.tgw = exactTest(DGEList, dispersion=dispersion)
-			de.tgw <- edgeR_DE_analysis(DGEList, de.tgw, datafile, dispersion, FDR,kclusters)
+			de.tgw <- edgeR_DE_postanalysis(DGEList, de.tgw, baseout, dispersion, FDR,kclusters)
 	}else{
 		cat ("Processing multiple factors using additive GLMs\n");
-		pdf(file=paste(datafile,'.qc_graphs.pdf',sep=''))
+		pdf(file=paste(baseout,'.qc_graphs.pdf',sep=''))
 		plotMDS(DGEList, main="Biological Co-efficient of Variation distance MDS plot");
 		plotMDS(DGEList$logCPM, main="Counts per million distance MDS plot")
 		group <- as.factor(DGEList$samples[, 'group'])
@@ -131,23 +131,23 @@ edgeR_DE_analysis_explore = function (targetsFile, datafile='tmp', dispersion='a
 		rm(de.tgw.t)
 		positives <-as.data.frame(positives)
 		rownames(positives)<-names_positives
-		write.table(positives,row.names=T,quote=F,sep="\t",file=paste(datafile,".factors.positives",sep=""))
-		write(c("factors:"),file=paste(datafile,".factors",sep=""))
-		write.table(DGEList$factors_to_do,col.names=F,row.names=T,quote=F,sep="\t",file=paste(datafile,".factors",sep=""),append=T)
-		write(c("\ncoefficients:"),file=paste(datafile,".factors",sep=""),append=T)
-		write.table(coefficients,col.names=F,row.names=T,quote=F,sep="\t",file=paste(datafile,".factors",sep=""),append=T)
-		write(c("\nTests:"),file=paste(datafile,".factors",sep=""),append=T)
-		write.table(col.names=F,quote=F,row.names=F,length(de.tgw$table$PValue),file=paste(datafile,".factors",sep=""),append=T)
-		write(c("\nPositives past ",FDR,':'),file=paste(datafile,".factors",sep=""),append=T)
-		write.table(positives,col.names=F,row.names=T,quote=F,sep="\t",file=paste(datafile,".factors",sep=""),append=T)
+		write.table(positives,row.names=T,quote=F,sep="\t",file=paste(baseout,".factors.positives",sep=""))
+		write(c("factors:"),file=paste(baseout,".factors",sep=""))
+		write.table(DGEList$factors_to_do,col.names=F,row.names=T,quote=F,sep="\t",file=paste(baseout,".factors",sep=""),append=T)
+		write(c("\ncoefficients:"),file=paste(baseout,".factors",sep=""),append=T)
+		write.table(coefficients,col.names=F,row.names=T,quote=F,sep="\t",file=paste(baseout,".factors",sep=""),append=T)
+		write(c("\nTests:"),file=paste(baseout,".factors",sep=""),append=T)
+		write.table(col.names=F,quote=F,row.names=F,length(de.tgw$table$PValue),file=paste(baseout,".factors",sep=""),append=T)
+		write(c("\nPositives past ",FDR,':'),file=paste(baseout,".factors",sep=""),append=T)
+		write.table(positives,col.names=F,row.names=T,quote=F,sep="\t",file=paste(baseout,".factors",sep=""),append=T)
 		
 		# give us the results for the group factor
-		de.tgw <- edgeR_DE_analysis(DGEList, de.tgw, datafile, dispersion, FDR,kclusters)
+		de.tgw <- edgeR_DE_postanalysis(DGEList, de.tgw, baseout, dispersion, FDR,kclusters)
 	}
 #	return (de.tgw)
 }
 
-edgeR_DE_analysis_no_reps_housekeeping = function (DGEList, datafile='tmp', dispersion='auto', FDR=0.05,kclusters = 10) {
+edgeR_DE_analysis_no_reps_housekeeping = function (DGEList, baseout='tmp', dispersion='auto', FDR=0.05,kclusters = 10) {
 	#TODO use housekeeping if no reps
 	#If there exist a sizeable number of control transcripts that should not be DE, the the
 	#dispersion could be estimated from them. For example, suppose that housekeeping is
@@ -164,7 +164,7 @@ edgeR_DE_analysis_no_reps_housekeeping = function (DGEList, datafile='tmp', disp
 	#> et <- exactTest(d)
 }
 
-edgeR_DE_analysis = function (DGEList, de.tgw, datafile='tmp', dispersion='auto', FDR=0.05,kclusters = 10) {
+edgeR_DE_postanalysis = function (DGEList, de.tgw, baseout='tmp', dispersion='auto', FDR=0.05,kclusters = 10) {
 	library(gdata,quietly=T,warn.conflicts=F,verbose=F)
 	library(gplots,quietly=T,warn.conflicts=F,verbose=F)
 	library(cluster,quietly=T,warn.conflicts=F,verbose=F)
@@ -183,21 +183,21 @@ edgeR_DE_analysis = function (DGEList, de.tgw, datafile='tmp', dispersion='auto'
 	#
 	# genes with positive log-fold change are up-regulated in group B compared
 	# with group A (and vice versa for genes with negative log-fold change).
-	pdf(file=paste(datafile,'.qc_graphs2.pdf',sep=''))
+	pdf(file=paste(baseout,'.qc_graphs2.pdf',sep=''))
+	logFC.box <-boxplot(de.tgw$table$logFC,main="log2 fold-change boxplot")
+	logFC.dev <- abs(0-logFC.box$stats[3])
 	fdrresults<-fdrtool(de.tgw$table$PValue,statistic='pvalue',plot=T)
 	de.tgw$table$QValue <- fdrresults$qval
 	de.tgw$table$lfdr <- fdrresults$lfdr
-	qval.box <- boxplot(de.tgw$table$QValue)
-	logFC.box <-boxplot(de.tgw$table$logFC)
-	logFC.dev <- abs(0-logFC.box$stats[3])
+	qval.box <- boxplot(de.tgw$table$QValue,main="Q-values (bayesian, tail of area) boxplot")
 	dev.off()
 	
 	# potentially housekeeping genes
 	#	housekeeping<-rownames(subset(de.tgw$table, PValue >= (1-FDR)))
 	# housekeeping<-rownames(subset(de.tgw$table, logFC >=logFC.box$stats[4] ))
 	housekeeping<-rownames(de.tgw$table[de.tgw$table$logFC > -logFC.dev & de.tgw$table$logFC < logFC.dev ,])
-	unlink(paste(datafile,'.housekeeping.txt',sep=''))
-	lapply(housekeeping, write, paste(datafile,'.housekeeping.txt',sep=''), append=T, ncolumns=1,sep ="\n")
+	unlink(paste(baseout,'.housekeeping.txt',sep=''))
+	lapply(housekeeping, write, paste(baseout,'.housekeeping.txt',sep=''), append=T, ncolumns=1,sep ="\n")
 	
 	
 	topTagCount = sum(de.tgw$table$QValue < FDR) 
@@ -205,16 +205,16 @@ edgeR_DE_analysis = function (DGEList, de.tgw, datafile='tmp', dispersion='auto'
 	detags_toptgw = toptgw$table[toptgw$table$FDR < FDR,];
 	detags_names = rownames(detags_toptgw)
 	
-	postscript(file=paste(datafile,'.ps',sep=''))
+	postscript(file=paste(baseout,'.ps',sep=''))
 	plotSmear(DGEList, de.tags=detags_names)
 	abline(h=c(-1,1), col="blue")
 	dev.off()
 	
 	# table with entries of interest
-	unlink(paste(datafile,'.results.txt',sep=''))
-	write.table(de.tgw$table, quote=F, file=paste(datafile,'.all.txt',sep=''), sep="\t",col.names=NA)
-	write.table(detags_toptgw, quote=F, file=paste(datafile,'.results.txt',sep=''), sep="\t",col.names=NA)
-#print ("Comparing groups for significant genes...")
+	unlink(paste(baseout,'.results.txt',sep=''))
+	write.table(de.tgw$table, quote=F, file=paste(baseout,'.all.txt',sep=''), sep="\t",col.names=NA)
+	write.table(detags_toptgw, quote=F, file=paste(baseout,'.results.txt',sep=''), sep="\t",col.names=NA)
+print ("Comparing groups for significant genes...")
 #	ordered.data <- as.data.frame(matrix(t(DGEList$counts[rownames(DGEList$counts) %in% detags_names]),ncol=length(as.vector(DGEList$samples$description))))
 #	ordered.data <- as.data.frame(matrix(t(de.tgw$CPM[rownames(de.tgw$CPM) %in% detags_names]),ncol=length(colnames(de.tgw$CPM))))
 #	rownames(ordered.data) <- detags_names
@@ -223,7 +223,7 @@ edgeR_DE_analysis = function (DGEList, de.tgw, datafile='tmp', dispersion='auto'
 	sample_names <- colnames(ordered.data)
 	
 	# gene plots for each library
-	pdf(file=paste(datafile,'.per_gene_plots.de.pdf',sep=''))
+	pdf(file=paste(baseout,'.per_gene_plots.de.pdf',sep=''))
 	par(mfrow=c(3, 2))
 	#remember [row,column]
 	for (i in 1:length(ordered.data[,1])) {
@@ -241,7 +241,7 @@ edgeR_DE_analysis = function (DGEList, de.tgw, datafile='tmp', dispersion='auto'
 	dev.off()
 	rm(d,i,ymin,ymax)
 	
-	pdf(file=paste(datafile,'.per_gene_plots.housekeeping.pdf',sep=''))
+	pdf(file=paste(baseout,'.per_gene_plots.housekeeping.pdf',sep=''))
 	par(mfrow=c(3, 2))
 	#remember [row,column]
 	for (i in 1:length(ordered.data[,1])) {
@@ -269,7 +269,7 @@ edgeR_DE_analysis = function (DGEList, de.tgw, datafile='tmp', dispersion='auto'
 	}
 	
 	# cluster data
-#print ("Clustering...")
+print ("Clustering...")
 	hc_genes <- agnes(centered.data, diss=FALSE, metric="euclidean") # cluster genes
 	hc_samples <- hclust(as.dist(1-cor(centered.data, method="spearman")), method="complete") # cluster conditions
 	myheatcol <- redgreen(75)
@@ -278,8 +278,8 @@ edgeR_DE_analysis = function (DGEList, de.tgw, datafile='tmp', dispersion='auto'
 	gene_colors <- partition_colors[gene_partition_assignments]
 
 	# heatmap
-#print ("Heatmap")
-	postscript(file=paste(datafile,'.heatmap.ps',sep=''), horizontal=FALSE, width=8, height=18, paper="special")
+print ("Heatmap and other graphs")
+	postscript(file=paste(baseout,'.heatmap.ps',sep=''), horizontal=FALSE, width=8, height=18, paper="special")
 	figure.heatmap1<-heatmap.2(centered.data, dendrogram="both", Rowv=as.dendrogram(hc_genes), Colv=as.dendrogram(hc_samples), col=myheatcol, RowSideColors=gene_colors, scale="none", density.info="none", trace="none", key=TRUE, keysize=1.2, cexCol=2.5, margins=c(15,15), lhei=c(0.4,2), lwid=c(2.5,4))
 	dev.off();
 	
@@ -291,19 +291,19 @@ edgeR_DE_analysis = function (DGEList, de.tgw, datafile='tmp', dispersion='auto'
 	figure.heatmap1.data.json<-toJSON(as.data.frame(figure.heatmap1$carpet))
 	figure.heatmap1.samples.json<-toJSON(rownames(figure.heatmap1$carpet))
 	figure.heatmap1.genes.json<-toJSON(colnames(figure.heatmap1$carpet))
-	write(fdr.data.json,file=paste(datafile,'.fdr.json',sep=''))
-	write(figure.heatmap1.data.json,file=paste(datafile,'.data.json',sep=''))
-	write(figure.heatmap1.samples.json,file=paste(datafile,'.samples.json',sep=''))
-	write(figure.heatmap1.genes.json,file=paste(datafile,'.genes.json',sep=''))
+	write(fdr.data.json,file=paste(baseout,'.fdr.json',sep=''))
+	write(figure.heatmap1.data.json,file=paste(baseout,'.data.json',sep=''))
+	write(figure.heatmap1.samples.json,file=paste(baseout,'.samples.json',sep=''))
+	write(figure.heatmap1.genes.json,file=paste(baseout,'.genes.json',sep=''))
 	hc_genes$labels <-hc_genes$order.lab # add labels
-	write.tree( as.phylo(as.hclust(hc_genes)),paste(datafile,'.hcgenes.newick',sep=''))
-	write.tree( as.phylo(as.hclust(hc_samples)),paste(datafile,'.hcsamples.newick',sep=''))
+	write.tree( as.phylo(as.hclust(hc_genes)),paste(baseout,'.hcgenes.newick',sep=''))
+	write.tree( as.phylo(as.hclust(hc_samples)),paste(baseout,'.hcsamples.newick',sep=''))
 	
 	return (de.tgw)
 }
 
 
-edgeR_heatmaps_all = function(datafile='tmp',kclusters = 10){
+edgeR_heatmaps_all = function(baseout='tmp',kclusters = 10){
 	library(gdata,quietly=T,warn.conflicts=F,verbose=F)
 	library(gplots,quietly=T,warn.conflicts=F,verbose=F)
 	library(cluster,quietly=T,warn.conflicts=F,verbose=F)
@@ -312,7 +312,7 @@ edgeR_heatmaps_all = function(datafile='tmp',kclusters = 10){
 	library(ape,quietly=T,warn.conflicts=F,verbose=F)
 	
 	# variables
-	data <- read.table(file=datafile, header=T, com="", sep="\t",row.names=1)
+	data <- read.table(file=baseout, header=T, com="", sep="\t",row.names=1)
 	
 	ordered.data <- data[with(data, order(data[,length(data[1,])])), ]
 	## last column is now FDR column
@@ -320,7 +320,7 @@ edgeR_heatmaps_all = function(datafile='tmp',kclusters = 10){
 	sample_names <- colnames(ordered.data[,-length(ordered.data[1,])])
 	
 	# gene plots
-	pdf(file=paste(datafile,'.per_gene_plots.pdf',sep=''))
+	pdf(file=paste(baseout,'.per_gene_plots.pdf',sep=''))
 	par(mfrow=c(3, 2))
 	#remember [row,column]
 	for (i in 1:length(ordered.data[,1])) {
@@ -347,7 +347,7 @@ edgeR_heatmaps_all = function(datafile='tmp',kclusters = 10){
 	gene_colors <- partition_colors[gene_partition_assignments]
 	
 	# heatmap
-	postscript(file=paste(datafile,'.heatmap.ps',sep=''), horizontal=FALSE, width=8, height=18, paper="special")
+	postscript(file=paste(baseout,'.heatmap.ps',sep=''), horizontal=FALSE, width=8, height=18, paper="special")
 	figure.heatmap1<-heatmap.2(centered.data, dendrogram="both", Rowv=as.dendrogram(hc_genes), Colv=as.dendrogram(hc_samples), col=myheatcol, RowSideColors=gene_colors, scale="none", density.info="none", trace="none", key=TRUE, keysize=1.2, cexCol=2.5, margins=c(15,15), lhei=c(0.4,2), lwid=c(2.5,4))
 	dev.off();
 	
@@ -358,13 +358,13 @@ edgeR_heatmaps_all = function(datafile='tmp',kclusters = 10){
 	figure.heatmap1.data.json<-toJSON(as.data.frame(figure.heatmap1$carpet))
 	figure.heatmap1.samples.json<-toJSON(rownames(figure.heatmap1$carpet))
 	figure.heatmap1.genes.json<-toJSON(colnames(figure.heatmap1$carpet))
-	cat(fdr.data.json,file=paste(datafile,'.fdr.json',sep=''))
-	cat(figure.heatmap1.data.json,file=paste(datafile,'.data.json',sep=''))
-	cat(figure.heatmap1.samples.json,file=paste(datafile,'.samples.json',sep=''))
-	cat(figure.heatmap1.genes.json,file=paste(datafile,'.genes.json',sep=''))
+	cat(fdr.data.json,file=paste(baseout,'.fdr.json',sep=''))
+	cat(figure.heatmap1.data.json,file=paste(baseout,'.data.json',sep=''))
+	cat(figure.heatmap1.samples.json,file=paste(baseout,'.samples.json',sep=''))
+	cat(figure.heatmap1.genes.json,file=paste(baseout,'.genes.json',sep=''))
 	hc_genes$labels <-hc_genes$order.lab # add labels
-	write.tree( as.phylo(as.hclust(hc_genes)),paste(datafile,'.hcgenes.newick',sep=''))
-	write.tree( as.phylo(as.hclust(hc_samples)),paste(datafile,'.hcsamples.newick',sep=''))
+	write.tree( as.phylo(as.hclust(hc_genes)),paste(baseout,'.hcgenes.newick',sep=''))
+	write.tree( as.phylo(as.hclust(hc_samples)),paste(baseout,'.hcsamples.newick',sep=''))
 }
 
 
