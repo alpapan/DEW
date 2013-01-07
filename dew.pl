@@ -1,6 +1,13 @@
 #!/usr/bin/perl -w
 
 =pod
+
+=head1 TODO
+
+ * graphs speedup: if max depth == 0 then don't create bioperl subfeatures?
+ * Write dew.pl description
+ * add DESeq and make Venn diagram
+
 =head1 NAME
 
  dew
@@ -70,43 +77,48 @@ test times:
 
 =head1 USAGE
 
-            'infile:s'              => Reference file of genes
-            'sequence:s'            => Instead of a file, provide a single sequence (in FASTA format with \n as line separator);
-            'format:s'              => The reads can be in BAM or FASTQ format. FASTQ can be .bz2 if bowtie2 is used
-            '1read|readset1|r:s{1,}'=> Sets of files (one per library). Tested with Phred33 FASTQ format
-            '2read|readset2:s{1,}'  => If provided, do paired end alignment. Sets of paired 'right' files (synced to readset1). Optional.
-            'samtools_exec:s'       => Executable to samtools if not in your path
-            'bwa_exec:s'            => Executable to BWA if not in your path
-            'bowtie2_exec:s'        => Executable to Bowtie2 if not in your path
-            'bamtools_exec:s'       => Executable to bamtools if not in your path
-            'uid:s'                 => A uid for naming output files. Optional, otherwise generate
-            'threads:i'             => Number of CPUs to use for alignment. BWA has no advantage over 4 threads
-            'library_name_file:s'   => An tag value tab delimited file (filename/alias) for giving a friendly alias for each readset library. Needs a header line to describe columns. Only include -1read files.
-            'median_cutoff:i'       => Median number of hits across reference must be above cutoff
-            'need_all_readsets'     => All sets of reads must have alignments against the gene in order for it to be processed. Otherwise, 1+ is sufficient. 
-            'over'                  => Allow overwriting of any files with the same name
-            'nographs'              => Do not produce any graphs. Graphs can take a very long time when there are many readsets (e.g. 30+ libraries and 30k+ genes). Also there is a memory leak somewhere...
-            'gene_graphs_only'      =>  The opposite of above; only do enough work to get the gene depth/coverage graphs and then exit
-            'contextual'            => Complete realignment of all genes in order to run a correction of biases properly. Does not read/store data in the cache
-            'use_bwa'               => Use BWA instead of Bowtie2
-            'correct_bias'          => Use eXpress to correct Illumina sequencing biases and transcript isofrm assignments. Increases runtime. Use -contextual for accuracy 
-	        'prepare_only'	    => Quit after post-processing readsets and writing initial DB
-	        'seeddb:s'              => Initialize database using this database file (e.g. after -prepare_only)
-	        'kanga'                 => Experimental:  use kanga
-	        'existing_aln:s{1,}'    => Experimental: use existing bam (read name sorted)
-	        'resume'		    => Load existing data from database and do not reprocess existing readsets (good for adding new readsets even with contextual. NB assumes same FASTA input so DO NOT use if you changed the FASTA reference gene file)
-	        'no_kangade|nokangade'  => Do not use kangade to process pairwise libraries
-	        'db_use_file'	    => Use file for SQL database rather than system memory (much slower but possible to analyze larger datasets)
-	        'dispersion'		=> For edgeR: if we have replicates, dispersion can be set to auto. otherwise set it to a float such as 0.1 (def)
-	        'fdr_cutof'			=> Cut off FDR for DE as float (0.001 def.)
-	        'cpm_cutoff'     => Cut off counts-per-million for parsing alignments to edgeR (def 2)
-	        'library_cutoff'    => Number of libraries that need to have cpm_cutoff to keep alignment (def 1)
+option legend (:s => string; :i => integer; :f => float; {1,} => one or more); shortened names are valid if they are unique (i.e. -1 instead of -1read) 
+
+            -infile:s              => Reference file of genes
+            -sequence:s            => Instead of a file, provide a single sequence (in FASTA format with \n as line separator);
+            -format:s              => The reads can be in BAM or FASTQ format. FASTQ can be .bz2 if bowtie2 is used
+            -1read|readset1|r:s{1,}=> Sets of files (one per library). Tested with Phred33 FASTQ format
+            -2read|readset2:s{1,}  => If provided, do paired end alignment. Sets of paired right files (synced to readset1). Optional.
+            -samtools_exec:s       => Executable to samtools if not in your path
+            -bwa_exec:s            => Executable to BWA if not in your path
+            -bowtie2_exec:s        => Executable to Bowtie2 if not in your path
+            -bamtools_exec:s       => Executable to bamtools if not in your path
+            -uid:s                 => A uid for naming output files. Optional, otherwise generate
+            -threads:i             => Number of CPUs to use for alignment. BWA has no advantage over 4 threads
+            -library_name_file:s   => An tag value tab delimited file (filename/alias) for giving a friendly alias for each readset library. Needs a header line to describe columns. Only include -1read files.
+            -median_cutoff:i       => Median number of hits across reference must be above cutoff
+            -need_all_readsets     => All sets of reads must have alignments against the gene in order for it to be processed. Otherwise, 1+ is sufficient. 
+            -over                  => Allow overwriting of any files with the same name
+            -nographs              => Do not produce any graphs. Graphs can take a very long time when there are many readsets (e.g. 30+ libraries and 30k+ genes). Also there is a memory leak somewhere...
+            -gene_graphs_only      => The opposite of above; only do enough work to get the gene depth/coverage graphs and then exit
+            -contextual            => Complete realignment of all genes in order to run a correction of biases properly. Does not read/store data in the cache
+            -use_bwa               => Use BWA instead of Bowtie2
+            -correct_bias          => Use eXpress to correct Illumina sequencing biases and transcript isofrm assignments. Increases runtime. Use -contextual for accuracy 
+            -prepare_only          => Quit after post-processing readsets and writing initial DB
+            -seeddb:s              => Initialize database using this database file (e.g. after -prepare_only)
+            -kanga                 => Experimental:  use kanga
+            -existing_aln:s{1,}    => Experimental: use existing bam (read name sorted)
+            -resume                => Load existing data from database and do not reprocess existing readsets (good for adding new readsets even with contextual. NB assumes same FASTA input so DO NOT use if you changed the FASTA reference gene file)
+            -no_kangade|nokangade  => Do not use kangade to process pairwise libraries
+            -db_use_file           => Use file for SQL database rather than system memory (much slower but possible to analyze larger datasets)
+            -dispersion            => For edgeR: if we have replicates, dispersion can be set to auto. otherwise set it to a float such as 0.1 (def)
+            -fdr_cutof             => Cut off FDR for DE as float (0.001 def.)
+            -cpm_cutoff            => Cut off counts-per-million for parsing alignments to edgeR (def 2)
+            -library_cutoff        => Number of libraries that need to have cpm_cutoff to keep alignment (def 1)
+            -binary_min_coverage:f => Minimum gene (length) coverage (0.00 ~ 1.00) for counting a gene as a expressed or not (def. 0.3)
+            -binary_min_reads:i    => Minimum number of aligned reads for counting a gene as a expressed or not (def. 4)
+	        
 
 =head1 AUTHORS
 
  Alexie Papanicolaou
 
-        1 CSIRO Ecosystem Sciences, Canberra, Australia
+        1 CSIRO Ecosystem Sciences, GPO 1700, Canberra 2601, Australia
         alexie@butterflybase.org
         
  Many thanks/credit to B. Haas (The Broad) for code bundled in Trinity-RNA-Seq
@@ -133,7 +145,7 @@ med:  for bioinformatics alpha tester
 low:  for end-user beta tester
 
 
-& AP; med; think of a way to speed up gene graphs. Eg. fork it out while kangade is running? For 35libs and 30k genes, we're talking about &stats_with_graph taking 1000 min vs 100 min w/o graphs
+& AP; med; think of a way to speed up gene graphs. Eg. fork it out while kangade is running? For 35libs and 30k genes, we're talking about &make_coverage_graphs taking 1000 min vs 100 min w/o graphs
  
 * AP; med; think what to report with the housekeeping genes. 
 
@@ -150,11 +162,6 @@ low:  for end-user beta tester
 
 * AP; low: can use parallel gnu sort but it is only available in newer machines.
 
-=head1 NOT TODO
-
-* AP; tried; Support kanga. Kanga -q1 was tried but issues: Minor (perf): it was slower than bwa. Minor (perf): we had to sort the sam file for both name- and coord-sorting as the
-  unmapped reads are placed before mapped ones. Minor (perf): it does not support sam/bam input, like bwa does (neither does bowtie2). 
-  Major: kangar are very large so no benefit but does not accept any compressed format (bz2, bam etc);  Major: huge amounts of memory needed
 
 =cut
 
@@ -202,7 +209,8 @@ my (
      %library_metadata,      $extra_genes,
      %readset_lookup,        $perform_bias_correction,
      %fold_changes,          %skipped_references,
-     %user_alias,            %groups_readsets
+     %user_alias,            %groups_readsets,
+     $md5_aliases_file
 );
 my $db_hostname   = 'localhost';
 my $samtools_exec = `which samtools`;
@@ -243,6 +251,8 @@ my $read_format            = 'fastq';
 my $threads                = 3;
 my $min_housekeeping_genes = 5;
 my $median_cutoff          = 1;
+my $binary_min_coverage    = 0.3;
+my $binary_min_reads       = 4;
 my (
      $uid,               $lib_alias_file,     $demand_all_readsets,
      $use_kanga,         @use_existing_bam,   $overwrite_results,
@@ -250,49 +260,55 @@ my (
      $db_use_file,       $dbname,             $no_graphs,
      $user_ref_sequence, $no_kangade,         $main_output_dir,
      $use_bwa,           $prepare_input_only, @sample_overlays,
-     $initial_db,        $resume,             $gene_graphs_only
+     $initial_db,        $resume,             $gene_graphs_only,
+     %binary_table
 );
 GetOptions(
   'infile:s'      => \$input_reference_file,
   'extra_genes:s' => \$extra_genes,
   'sequence:s'    => \$user_ref_sequence,
   'format:s'      => \$read_format,
-  '1read|readset1|r:s{1,}' => \@readsets,           # if bowtie2, it can be /bz2
-  '2read|readset2:s{1,}'   => \@readsets2,          # if bowtie2, it can be /bz2
-  'kangade_exec:s'         => \$kangade_exec,
-  'samtools_exec:s'        => \$samtools_exec,
-  'bowtie2_exec:s'         => \$bowtie2_exec,
-  'bamtools_exec:s'        => \$bamtools_exec,      # SE bowtie2 only
-  'bwa_exec:s'             => \$bwa_exec,           # modified bwa
-  'uid:s'                  => \$uid,
-  'threads:i'              => \$threads,
-  'library_name_file:s'    => \$lib_alias_file,
-  'prepare_only'           => \$prepare_input_only,
+  '1read|readset1|r:s{1,}'    => \@readsets,        # if bowtie2, it can be /bz2
+  '2read|readset2:s{1,}'      => \@readsets2,       # if bowtie2, it can be /bz2
+  'kangade_exec:s'            => \$kangade_exec,
+  'samtools_exec:s'           => \$samtools_exec,
+  'bowtie2_exec:s'            => \$bowtie2_exec,
+  'bamtools_exec:s'           => \$bamtools_exec,   # SE bowtie2 only
+  'bwa_exec:s'                => \$bwa_exec,        # modified bwa
+  'uid:s'                     => \$uid,
+  'threads:i'                 => \$threads,
+  'alias|library_name_file:s' => \$lib_alias_file,
+  'prepare_only' => \$prepare_input_only,
 
   #  'housekeeping:s{,}'      => \@housekeeping_ids,
-  'median_cutoff:i'      => \$median_cutoff,
-  'need_all_readsets'    => \$demand_all_readsets,
-  'over'                 => \$overwrite_results,
-  'nographs'             => \$no_graphs,
-  'hostname:s'           => \$db_hostname,
-  'dbname:s'             => \$dbname,
-  'seeddb:s'             => \$initial_db,
-  'o:s'                  => \$main_output_dir,
-  'contextual'           => \$contextual_alignment,
-  'correct_bias'         => \$perform_bias_correction,
-  'bwa'                  => \$use_bwa,
-  'kanga'                => \$use_kanga,
-  'existing_aln:s{1,}'   => \@use_existing_bam,
-  'debug:i'              => \$debug,
-  'resume'               => \$resume,
-  'no_kangade|nokangade' => \$no_kangade,
-  'db_use_file'          => \$db_use_file,
-  'gene_graphs_only'     => \$gene_graphs_only,
-  'dispersion:s'         => \$edgeR_dispersion,          #auto for bio.reps
-  'fdr_cutoff:f'         => \$fdr_pval_cutoff,
-  'cpm_cutoff'           => \$minCPM,
-  'library_cutoff'          => \$minLibs
+  'median_cutoff:i'       => \$median_cutoff,
+  'need_all_readsets'     => \$demand_all_readsets,
+  'over'                  => \$overwrite_results,
+  'nographs'              => \$no_graphs,
+  'hostname:s'            => \$db_hostname,
+  'dbname:s'              => \$dbname,
+  'seeddb:s'              => \$initial_db,
+  'o:s'                   => \$main_output_dir,
+  'contextual'            => \$contextual_alignment,
+  'correct_bias'          => \$perform_bias_correction,
+  'bwa'                   => \$use_bwa,
+  'kanga'                 => \$use_kanga,
+  'existing_aln:s{1,}'    => \@use_existing_bam,
+  'debug:i'               => \$debug,
+  'resume'                => \$resume,
+  'no_kangade|nokangade'  => \$no_kangade,
+  'db_use_file'           => \$db_use_file,
+  'gene_graphs_only'      => \$gene_graphs_only,
+  'dispersion:s'          => \$edgeR_dispersion,          #auto for bio.reps
+  'fdr_cutoff:f'          => \$fdr_pval_cutoff,
+  'cpm_cutoff'            => \$minCPM,
+  'cutoff_library'        => \$minLibs,
+  'binary_min_coverage:f' => \$binary_min_coverage,
+  'binary_min_reads:i'    => \$binary_min_reads,
 );
+die
+  "-binary_min_coverage has to be between 0 and 1 (not $binary_min_coverage)\n"
+  unless $binary_min_coverage > 0 && $binary_min_coverage <= 1;
 my $bunzip2_exec = `which pbzip2`;
 chomp($bunzip2_exec);
 my $bunzip_threads = $threads <= 6 ? $threads : 6;
@@ -361,6 +377,7 @@ if ( !-s $counts_expression_level_matrix
   &sqlite_backup() unless $db_use_file;
   close STATS;
   close STATS_RATIO;
+  &print_binary_table();
 }
 my $check_lines = `wc -l < $counts_expression_level_matrix`;
 die "No expression data available"
@@ -399,7 +416,10 @@ sub mytime() {
 }
 
 sub sqlite_backup() {
-  return if $debug;
+  if ($debug) {
+    warn "DEBUG mode: Will not backup database\n";
+    return;
+  }
   my $keep = shift;
   my $backup_db_file = $db_use_file ? $db_file . '.backup' : $db_file;
   print "\nCheckpointing database. Do not halt...\r";
@@ -424,7 +444,7 @@ sub sqlite_backup() {
 sub sqlite_init() {
   $db_file = $debug ? $cwd . "/$dbname.debug" : $cwd . "/$dbname";
   my $active_db_file = $db_use_file ? $db_file . '.active' : ':memory:';
-  if ( $initial_db && $initial_db ne $db_file ) {
+  if ( !-s $db_file && $initial_db && $initial_db ne $db_file ) {
     warn "Will use $initial_db as seed database\n";
     copy( $initial_db, $db_file );
   }
@@ -441,7 +461,7 @@ sub sqlite_init() {
   );
   my $db_version = $dbh->{sqlite_version};
   die "Cannot create SQLite database" unless $db_version;
-  print "\tUsing SQLite DB $db_version\n";
+  print "\tUsing SQLite DB v$db_version\n";
   if ($db_existed) {
     $dbh->sqlite_backup_from_file($db_file);
     ### PRAGMAS for speed
@@ -563,7 +583,7 @@ sub sqlite_init() {
   my $add_seqhash_to_seqdb = $dbh->prepare(
              "INSERT INTO sequence_data (seq_md5hash,seq_length) VALUES (?,?)");
   my $depth_table = 'depth';
-  if ($contextual_alignment) { $depth_table .= '_tmp'; }
+  $depth_table .= '_tmp' if $contextual_alignment;
   my $check_depth_data = $dbh->prepare(
 "SELECT data from $depth_table WHERE seq_md5hash=? AND readset_id=(SELECT readset_id from readsets where readset_file=?)"
   );
@@ -577,7 +597,7 @@ sub sqlite_init() {
 "INSERT INTO $depth_table (seq_md5hash,readset_id,data) VALUES (?,(SELECT readset_id from readsets where readset_file=?),?)"
   );
   my $expression_statistics_table = 'expression_statistics';
-  if ($contextual_alignment) { $expression_statistics_table .= '_tmp'; }
+  $expression_statistics_table .= '_tmp' if $contextual_alignment;
   my $init_expression_statistics = $dbh->prepare(
 "INSERT INTO $expression_statistics_table (seq_md5hash, readset_id) VALUES (?,(SELECT readset_id from readsets where readset_file=?)) "
   );
@@ -788,6 +808,8 @@ sub sqlite_get_md5($) {
   my $id = shift;
   $get_hash_from_seqdb->execute($id);
   my $row = $get_hash_from_seqdb->fetchrow_arrayref();
+
+  #warn Dumper $get_hash_from_seqdb;
   die "Cannot find data for $id\n" unless $row;
   return $row->[0];
 }
@@ -867,7 +889,7 @@ sub sqlite_add_rpkm_expression_statistics($) {
   if ( !$check || !defined( $check->{'rpkm'} ) ) {
     warn Dumper($check) if $debug;
     die
-"Could not add express expression statistics for: $seq_md5hash,$readset,$rpkm,$total_reads_hit\n";
+"Could not add RPKM expression statistics for: $seq_md5hash,$readset,$rpkm,$total_reads_hit\n";
   }
 }
 
@@ -1029,12 +1051,17 @@ sub perform_checks_preliminary() {
     pod2usage
 "Result dir $result_dir already exists. If you wish to overwrite give the option -over otherwise delete the directory\n";
   }
+  print "Checking for R installations\n";
+  system(
+'R --no-restore --no-save --slave -e \'source("~/workspace/dew/R/dew_funcs.R");dew_install();\' 2>/dev/null'
+  );
   mkdir($result_dir)              unless -d $result_dir;
   mkdir($edgeR_dir)               unless -d $edgeR_dir;
   mkdir( $result_dir . "graphs" ) unless -d $result_dir . "graphs";
   open( LOG, ">>$result_dir/$uid.log" ) || die($!);
   print LOG "#Started: " . &mytime . "\n";
 
+  # maybe one day:
   #  if (@housekeeping_ids) {
   #    print LOG "Housekeeping genes requested:\n";
   #    if ( -s $housekeeping_ids[0] ) {
@@ -1129,7 +1156,7 @@ sub prepare_library_alias() {
       my $computer_friendly_name = $data[1];
       $computer_friendly_name =~ s/\W/_/g;
       $groups_readsets{ $library_metadata{ $data[1] }{'group'} }{ $data[1] } =
-        $edgeR_dir . $computer_friendly_name . '.files';
+        $edgeR_dir . $computer_friendly_name . '.dat';
     }
     close IN;
   } else {
@@ -1147,64 +1174,92 @@ sub prepare_library_alias() {
 }
 
 sub prepare_input_data() {
+  my $do_backup = 0;
   print &mytime . "Preparing readsets\n";
   &prepare_library_alias();
   for ( my $i = 0 ; $i < @readsets ; $i++ ) {
     if ($doing_paired_end) {
-      my ( $readset_name, $library_size ) =
+      my ( $readset_name, $library_size, $do_backup ) =
         &perform_readset_metadata( $readsets[$i], $readsets2[$i] );
     } else {
-      my ( $readset_name, $library_size ) =
+      my ( $readset_name, $library_size, $do_backup ) =
         &perform_readset_metadata( $readsets[$i] );
     }
   }
+  &sqlite_backup() if !$db_use_file && $do_backup;
   print "\n" . &mytime . "Preparing references...\n";
 
   # prepare alignment file.
   my $file_to_align = $result_dir . "$uid.toalign";
 
-  #unlink($file_to_align) if -s $file_to_align;
+  # Once: create input file by validating user input
   if ( !-s $file_to_align ) {
+    open( FASTA, ">$file_to_align" ) || die($!);
 
     # create input file if user provided sequence on cmd line
     my $reference_file = $input_reference_file;
     if ($user_ref_sequence) {
-      $reference_file = $result_dir . "$uid.query";
+      $user_ref_sequence = ~s/^(>.+\\n)//;
+      my $user_id = $1 ? $1 : ">query\n";
       $user_ref_sequence =~ s/\\n/\n/g;
+      $user_ref_sequence = &seq_cleanup($user_ref_sequence);
       die "Sequence from user contains non-ATCGN characters!\n"
         if $user_ref_sequence =~ /[^ATCGN]/;
-      open( FASTA, ">$reference_file" ) || die($!);
-      print FASTA ">query\n" unless ( $user_ref_sequence =~ /^>/ );
-      print FASTA uc($user_ref_sequence) . "\n";
-      close FASTA;
+      print FASTA $user_id . $user_ref_sequence . "\n";
+    } else {
+      my $reference_file_obj =
+        Bio::SeqIO->new( -file => $reference_file, -format => 'fasta' );
+      while ( my $seq_obj = $reference_file_obj->next_seq() ) {
+        my $id = $seq_obj->id() ? $seq_obj->id() : 'query';
+        my $sequence = $seq_obj->seq();
+        $sequence = &seq_cleanup($sequence);
+        print FASTA ">$id\n$sequence\n";
+      }
+      undef($reference_file_obj);
     }
     die "Nothing to align!" unless $reference_file && -s $reference_file;
-    copy( $reference_file, $file_to_align );
     if ($extra_genes) {
-      open( FASTA, ">>$file_to_align" ) || die($!);
-      open( IN,    $extra_genes )       || die($!);
-      while ( my $ln = <IN> ) {
-        $ln = uc($ln) unless $ln =~ /^>/;
-        print FASTA $ln;
+      my $reference_file_obj =
+        Bio::SeqIO->new( -file => $reference_file, -format => 'fasta' );
+      while ( my $seq_obj = $reference_file_obj->next_seq() ) {
+        my $id = $seq_obj->id() ? $seq_obj->id() : 'extra';
+        my $sequence = $seq_obj->seq();
+        $sequence = &seq_cleanup($sequence);
+        print FASTA ">$id\n$sequence\n";
       }
-      close FASTA;
+      undef($reference_file_obj);
     }
-    unlink($reference_file) if $user_ref_sequence;
+    close FASTA;
   }
+
+  # Every time: process input files
   die "Cannot find input FASTA: $file_to_align\n" unless -s $file_to_align;
+  $md5_aliases_file = $file_to_align . '.md5';
   if ( -s "$file_to_align.checked" && -s $db_file ) {
     open( IN, "$file_to_align.md5" );
     while ( my $ln = <IN> ) {
       chomp($ln);
       my @data = split( "\t", $ln );
       next unless $data[1];
+      my $seq_md5hash = $data[0];
       push( @reference_sequence_list, $data[1] );
-      $user_alias{ $data[0] } = $data[1];
+      $user_alias{$seq_md5hash} = $data[1];
+      for ( my $i = 0 ; $i < ( scalar(@readsets) ) ; $i++ ) {
+        &sqlite_init_expression_statistics( $seq_md5hash, $readsets[$i] );
+        for ( my $k = $i + 1 ; $k < scalar(@readsets) ; $k++ ) {
+          next if $readsets[$i] eq $readsets[$k];
+          &sqlite_start_fold_change( $seq_md5hash, $readsets[$i],
+                                     $readsets[$k] );
+        }
+      }
     }
     close IN;
 
    # we assume we don't need to run the sql commands because they already exist.
   } else {
+
+    # first time or every time .checked file is deleted.
+    $do_backup = 1;
     open( MD5SUMS, ">$file_to_align.md5" );
     open( BED, ">$file_to_align.bed" ) || die($!);
     my $reference_file_obj =
@@ -1212,7 +1267,8 @@ sub prepare_input_data() {
     while ( my $seq_obj = $reference_file_obj->next_seq() ) {
       my $id = $seq_obj->id();
       push( @reference_sequence_list, $id );
-      my $sequence = uc( $seq_obj->seq() );
+      my $sequence = $seq_obj->seq();
+      $sequence = &seq_cleanup($sequence);
       die "No sequence for $id!\n" if ( !$sequence );
       die "Sequence for $id contains non-ATCGN characters!\n"
         if $sequence =~ /[^ATCGN]/;
@@ -1242,7 +1298,7 @@ sub prepare_input_data() {
     print CHECK "Done\n";
     close CHECK;
   }
-  &sqlite_backup(1) unless $db_use_file;
+  &sqlite_backup(1) if !$db_use_file;    #&& $do_backup;
 
   # prepare file for alignments
   if ($use_kanga) {
@@ -1311,7 +1367,6 @@ sub starts_alignments() {
       if $readsets2[$i];
     print "Unpaired readset " . $readsets[$i] . " : $alnout_text\n"
       if !$readsets2[$i];
-    print "\n";
   }
   print "\tNo alignments need to be done. Processing all existing...\n"
     if !$todo;
@@ -1825,6 +1880,7 @@ sub perform_kangade() {
 sub perform_readset_metadata($$) {
   my $readset      = shift;
   my $readset2     = shift;
+  my $do_backup    = 0;
   my $library_size = int(0);
   my $readset_name =
       $library_aliases{$readset}
@@ -1835,6 +1891,7 @@ sub perform_readset_metadata($$) {
   if ($result) {
     return ( $result->{'alias'}, $result->{'total_reads'} );
   }
+  $do_backup = 1;
   print "Counting reads in readset $readset / $readset2\n";
 
   # get library sizes
@@ -1876,7 +1933,7 @@ sub perform_readset_metadata($$) {
   die "Cannot get library size for $readset"
     unless $library_size && $library_size > 0;
   &sqlite_add_readset_metadata( $readset, $readset_name, $library_size );
-  return ( $readset_name, $library_size );
+  return ( $readset_name, $library_size, $do_backup );
 }
 
 sub align_bowtie2() {
@@ -1982,7 +2039,7 @@ sub align_kanga() {
       }
       ####temp!!! debug
       &process_cmd(
-"merge_left_right_nameSorted_SAMs.pl --left_sam $sam.1 --right_sam $sam.2  -D 800 -C 100 > $sam.t"
+"$RealBin/merge_left_right_nameSorted_SAMs.pl --left_sam $sam.1 --right_sam $sam.2  -D 800 -C 100 > $sam.t"
       );
       unlink("$sam.1");
       unlink("$sam.2");
@@ -2058,7 +2115,11 @@ sub process_alignments($) {
     unless -s $alignment_bam . '.bai';
   die "File $alignment_bam cannot be indexed"
     unless -s $alignment_bam . '.bai';
-  my @sizes              = `samtools idxstats $alignment_bam|grep -v '^\*'`;
+  &process_cmd("samtools idxstats $alignment_bam > $alignment_bam.stats")
+    unless -s "$alignment_bam.stats";
+  die "File $alignment_bam cannot be indexed"
+    unless -s $alignment_bam . '.stats';
+  my @sizes              = `grep -v '^\*' $alignment_bam.stats`;
   my $reads_that_aligned = `samtools view -F260 -c $alignment_bam`;
   chomp($reads_that_aligned);
   my $readset_metadata = &sqlite_get_readset_metadata($readset);
@@ -2335,11 +2396,7 @@ sub perform_correct_bias($$$) {
     }
   }
   &process_express_bias( $express_results, $readset );
-  if ($contextual_alignment) {
-    return ($express_bam);
-  } else {
-    return ($original_bam);
-  }
+  return $original_bam;
 }
 
 sub perform_stats() {
@@ -2364,7 +2421,7 @@ sub perform_stats() {
     if $perform_bias_correction;
   print STATS_RATIO "\n";
   print STATS
-"Checksum\tReadset\tGene alias\tRPKM\tMean\tstd. dev\tMedian\tUpper limit\n";
+"Checksum\tReadset\tGene alias\tRPKM\tMean\tstd. dev\tMedian\tUpper limit\tTotal hits\tGene coverage\n";
 
   foreach my $id (@reference_sequence_list) {
     &process_main_stats($id);
@@ -2374,13 +2431,16 @@ sub perform_stats() {
       $dbh->do("PRAGMA shrink_memory") if ( $timer_counter % 100 == 0 );
     }
   }
+  if ( !$no_graphs ) {
+    &rename_file_md52gene("$result_dir/graphs/");
+  }
 }
 
-sub stats_with_graph_js($$$) {
+sub make_coverage_graphs_js($$$) {
   ## TODO to avoid BioPerl.
 }
 
-sub stats_with_graph($$$) {
+sub make_coverage_graphs($$$) {
   my ( $seq_md5hash, $seq_id, $seq_size ) = @_;
   my $graph_file = "$result_dir/graphs/$seq_md5hash.graph.png";
   return if -s $graph_file;
@@ -2588,11 +2648,12 @@ sub process_main_stats($) {
       next;
     }
     $readsets_covered++;
+    my $coverage = sprintf( "%.2f", ( $no_bp_covered / $seq_size ) );
     &sqlite_add_main_expression_statistics(
                          $seq_md5hash, $readsets[$i], $hit_mean, $no_bp_covered,
                          $mean_reads,  $hit_median,   $hit_max,  $hit_sd );
     print STATS
-"$seq_md5hash\t$readset_name\t$seq_id\t$rpkm\t$hit_mean\t$hit_sd\t$hit_median\t$hit_max\n";
+"$seq_md5hash\t$readset_name\t$seq_id\t$rpkm\t$hit_mean\t$hit_sd\t$hit_median\t$hit_max\t$total_hit_reads\t$coverage\n";
   }
   if ( $readsets_covered == 0
        || ( $demand_all_readsets && $readsets_covered < $demand_all_readsets ) )
@@ -2605,7 +2666,57 @@ sub process_main_stats($) {
     $skipped_references{$seq_md5hash} = 1;
     return;
   }
-  &stats_with_graph( $seq_md5hash, $seq_id, $seq_size ) if !$no_graphs;
+  &make_coverage_graphs( $seq_md5hash, $seq_id, $seq_size ) if !$no_graphs;
+}
+
+sub print_binary_table() {
+  my $out              = $result_dir . "$uid.expression_levels.binary.tsv";
+  my $in               = $result_dir . "$uid.raw_stats.tsv" || die($!);
+  my @ordered_readsets = sort keys %library_metadata;
+  print "Producing binary table $out\n";
+  open( IN, $in );
+  my $headers = <IN>;
+  while ( my $ln = <IN> ) {
+    chomp($ln);
+    my (
+         $seq_md5hash,     $readset_name, $seq_id,     $rpkm,
+         $hit_mean,        $hit_sd,       $hit_median, $hit_max,
+         $total_hit_reads, $coverage
+    ) = split( "\t", $ln );
+    next unless $coverage;
+    next if ( $hit_mean == 0 || $hit_median == 0 );
+    if ( $total_hit_reads >= $binary_min_reads ) {
+      if ( $coverage >= $binary_min_coverage ) {
+        $binary_table{$seq_md5hash}{$readset_name} = 1;
+      }
+    }
+  }
+  close IN;
+  open( OUT, ">$out" );
+  my $p = "Gene\t" . join( "\t", @ordered_readsets ) . "\n";
+  my @headers = sort keys %{ $library_metadata{ (%library_metadata)[0] } };
+  foreach my $metadata_head (@headers) {
+    $p .= $metadata_head;
+    foreach my $readset (@ordered_readsets) {
+      $p .=
+        $library_metadata{$readset}{$metadata_head}
+        ? "\t" . $library_metadata{$readset}{$metadata_head}
+        : "\tnone";
+    }
+    $p .= "\n";
+  }
+  print OUT $p;
+  foreach my $seq_md5hash ( keys %binary_table ) {
+    my $seq_id = $user_alias{$seq_md5hash};
+    my $print  = $seq_id;
+    foreach my $readset_name (@ordered_readsets) {
+      my $is_expressed =
+        $binary_table{$seq_md5hash}{$readset_name} ? 1 : int(0);
+      $print .= "\t" . $is_expressed;
+    }
+    print OUT $print . "\n";
+  }
+  close OUT;
 }
 
 sub process_expression_level() {
@@ -2885,11 +2996,11 @@ sub perform_TMM_normalization_edgeR() {
     foreach my $readset (@readsets_from_matrix) {
       my $readset_cf = $readset;
       $readset_cf =~ s/\W/_/g;
-      my $file_of_files = $edgeR_dir . "$readset_cf.files";
-      $readset_R_filenames{$readset} = $file_of_files;
-      open( my $ofh, ">$file_of_files" )
-        || die( "Cannot write to $file_of_files\n" . $! );
-      $ofhs{$readset} = $ofh;
+      my $count_data_file = $edgeR_dir . "$readset_cf.dat";
+      open( my $ofh, ">$count_data_file" )
+        || die( "Cannot write to $count_data_file\n" . $! );
+      $readset_R_filenames{$readset} = $count_data_file;
+      $ofhs{$readset}                = $ofh;
     }
 
     # create a tab delimited file which is gene tab count
@@ -2931,17 +3042,16 @@ sub perform_edgeR_pairwise() {
       . join( ", ", keys %{ $groups_readsets{$g} } ) . "\n";
   }
   for ( my $i = 0 ; $i < @groups - 1 ; $i++ ) {
-    print $groups[$i] . " vs ";
+    print &mytime . "\n";
     for ( my $k = $i + 1 ; $k < @groups ; $k++ ) {
-      print $groups[$k] . "\n";
+      print $groups[$i] . " vs: " . $groups[$k] . "\r";
       &run_edgeR( $groups[$i], $groups[$k] );
     }
   }
+  print "\n";
 }
 
 sub process_edgeR_graphs() {
-
-  #from b.haas
   my $edgeR_diff_expressed_genes_ref = shift;
   my $norm_matrix_file = basename($fpkm_expression_level_matrix_TMM);
   chdir($edgeR_dir);
@@ -2964,12 +3074,14 @@ sub process_edgeR_graphs() {
   my $R_script = "$diff_expr_matrix.R";
   open( OUTR, ">$R_script" ) or die "Error, cannot write to $R_script. $!";
   print OUTR "
-source('$RealBin/R/edgeR_funcs.R')
-edgeR_heatmaps_all('$diff_expr_matrix',$tree_clusters)
+source('$RealBin/R/dew_funcs.R')
+edgeR_heatmaps_all('$md5_aliases_file','$diff_expr_matrix',$tree_clusters)
     ";
   print OUTR "save.image(file='$diff_expr_matrix.Rdata');\n" if $debug;
   close OUTR;
-  &process_cmd("R --vanilla --slave -f $R_script >/dev/null 2>/dev/null");
+  &process_cmd(
+"R --no-restore --no-save --slave -f $R_script > $R_script.log 2>$R_script.err"
+  );
 
   # we now have the heatmaps and cluster data. Produce JSON objects for web
   # NEWICK data
@@ -3004,8 +3116,8 @@ sub prepare_heatmap_for_canvas() {
   close MATRIX;
   my $htmlfile = $diff_expr_matrix;
   $htmlfile .= '.heatmap.html';
-  print &mytime()
-    . "canvas: Preparing HTML/JS code for interactive graph of $htmlfile\n";
+
+#print &mytime()     . "canvas: Preparing HTML/JS code for interactive graph of $htmlfile\n";
   my $js_dir = $edgeR_dir . 'js/';
   mkdir($js_dir) unless -d $js_dir;
   my %for_json_array;
@@ -3435,17 +3547,18 @@ sub run_TMM {
   }
   close OUT1;
   my $tmm_norm_script = $edgeR_dir . "tmp_runTMM.R";
-  open( OUT2, ">$tmm_norm_script" )
-    or die "Error, cannot write to $tmm_norm_script";
+  open( OUT2, ">$tmm_norm_script" ) || die "$!";
 
   # TODO using minimum CPM/replicates
   print OUT2 "
-  source('$RealBin/R/edgeR_funcs.R')
+  source('$RealBin/R/dew_funcs.R')
   TMM_normalize('$data_file_list',$minCPM,$minLibs,'$output')
     ";
   close OUT2;
-  &process_cmd( "R --vanilla --slave -f $tmm_norm_script >/dev/null",
-                $edgeR_dir );
+  &process_cmd(
+"R --no-restore --no-save --slave -f $tmm_norm_script >$tmm_norm_script.log 2>$tmm_norm_script.err",
+    $edgeR_dir
+  );
   unless ( -s $output ) {
     print LOG "TMM normalization failed.\n";
     die "TMM normalization failed.\n";
@@ -3481,12 +3594,14 @@ sub run_edgeR {
   close OUT1;
   open( OUTR, ">$R_script" ) or die "Error, cannot write $R_script: $!";
   print OUTR "
-  source('$RealBin/R/edgeR_funcs.R')
-  edgeR_DE_explore('$target_file','$base',$edgeR_dispersion,$fdr_pval_cutoff,$tree_clusters,$minCPM,$minLibs);
+  source('$RealBin/R/dew_funcs.R')
+  edgeR_DE_explore('$md5_aliases_file','$target_file','$base',$edgeR_dispersion,$fdr_pval_cutoff,$tree_clusters,$minCPM,$minLibs);
   ";
   close OUTR;
-  &process_cmd( "R --vanilla --slave -f $R_script >/dev/null 2>/dev/null",
-                $edgeR_dir );
+  &process_cmd(
+"R --no-restore --no-save --slave -f $R_script >$R_script.log 2>$R_script.err",
+    $edgeR_dir
+  );
   my $html_file =
     &prepare_heatmap_for_canvas(
                                  $uid . " of $group_A vs $group_B",
@@ -3637,4 +3752,60 @@ sub check_fastq_format() {
     last if $counter >= $max_seqs;
   }
   return 'phred33';
+}
+
+sub rename_file_md52gene() {
+  my $dir   = shift;
+  my @files = glob( $dir . "/*" );
+  mkdir( $dir . '/gene_names' ) unless -d $dir . '/gene_names';
+  foreach my $file (@files) {
+    next unless $file && -s $file;
+    next if -d $file;
+    my $filename = basename($file);
+    my $dirname  = dirname($file);
+    $filename =~ /^(\w+)(.+)$/;
+    my $md5 = $1 || next;
+    my $xtn = $2 ? $2 : '';
+    next unless $user_alias{$md5};
+    my $new_name = $user_alias{$md5};
+    $new_name =~ s/[^\w\.\-\_]+/_/g;
+    my $new_filename = $dirname . '/gene_names/' . $new_name . $xtn;
+    symlink( "../$filename", $new_filename );
+  }
+}
+
+sub seq_cleanup ($) {
+
+  #IUPAC:
+  # T>G>C>A
+  #S: C or G -> G
+  #W: A or T -> T
+  #R: A or G purine -> G
+  #Y: C or T/U pyrimidine -> T
+  #M: A or C amino -> C
+  #K: G or T/U keto -> T
+  #B: C/G/T not A -> T
+  #D: A/G/T not C -> T
+  #H: A/C/T not G -> T
+  #V: A/G/C not T -> G
+  #N: A/G/C/T: any -> N
+  #X -> N
+  my $string = shift;
+  return if !$string;
+  $string =~ s/\s+//g;
+  $string =~ s/\W+//g;
+  return if !$string || $string =~ /^\s*$/;
+  $string =~ s/S/G/g;
+  $string =~ s/R/G/g;
+  $string =~ s/M/C/g;
+  $string =~ s/V/G/g;
+  $string =~ s/X/N/g;
+  $string =~ s/U/T/g;
+  $string =~ s/Y/T/g;
+  $string =~ s/K/T/g;
+  $string =~ s/W/T/g;
+  $string =~ s/B/T/g;
+  $string =~ s/D/T/g;
+  $string =~ s/H/T/g;
+  return uc($string);
 }
