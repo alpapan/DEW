@@ -4,6 +4,7 @@
 
 =head1 TODO
 
+ * support PE and SE at the same time (use lib_alias file as manual switch would be annoying)
  * graphs speedup: if max depth == 0 then don't create bioperl subfeatures?
  * Write dew.pl description
  * add DESeq and make Venn diagram
@@ -43,12 +44,12 @@ See /demo and try:
 
 time dew.pl -dbname dew_webserver.db -library_name lib_alias.txt  \
  -contextual  -correct_bias  -uid 8f10caff61e2022d056758037df77003 \
- -1read Sp.ds.1M.left.fq \
- -2read Sp.ds.1M.right.fq \
- -1read Sp.hs.1M.left.fq \
- -2read Sp.hs.1M.right.fq \
- -1read Sp.log.1M.left.fq \
- -2read Sp.log.1M.right.fq \
+ -1read Sp.ds.1M.left.fq.bz2 \
+ -2read Sp.ds.1M.right.fq.bz2 \
+ -1read Sp.hs.1M.left.fq.bz2 \
+ -2read Sp.hs.1M.right.fq.bz2 \
+ -1read Sp.log.1M.left.fq.bz2 \
+ -2read Sp.log.1M.right.fq.bz2 \
  -i 8f10caff61e2022d056758037df77003.query -o 8f10caff61e2022d056758037df77003.dew.output -thre 4
  
 test times:
@@ -207,7 +208,7 @@ my (
      $reference_file_md5sum, @reference_sequence_list,
      %library_aliases,       $contextual_alignment,
      %library_metadata,      $extra_genes,
-     %readset_lookup,        $perform_bias_correction,
+     %paired_readset_lookup,        $perform_bias_correction,
      %fold_changes,          %skipped_references,
      %user_alias,            %groups_readsets,
      $md5_aliases_file
@@ -256,7 +257,7 @@ my $binary_min_reads       = 4;
 my (
      $uid,               $lib_alias_file,     $demand_all_readsets,
      $use_kanga,         @use_existing_bam,   $overwrite_results,
-     @readsets2,         $doing_paired_end,   $db_file,
+     @readsets2,         $db_file,
      $db_use_file,       $dbname,             $no_graphs,
      $user_ref_sequence, $no_kangade,         $main_output_dir,
      $use_bwa,           $prepare_input_only, @sample_overlays,
@@ -858,7 +859,7 @@ sub sqlite_add_readset_metadata($$$) {
   my $readset_filename = shift;
   my $lib_alias        = shift;
   my $total_reads      = shift;
-  my $is_paired        = $doing_paired_end ? 1 : int(0);
+  my $is_paired        = $paired_readset_lookup{$readset_filename};
   my $result           = &sqlite_get_readset_metadata($readset_filename);
   $add_readset->execute( $readset_filename, $is_paired, $lib_alias,
                          $total_reads, localtime() )
@@ -994,6 +995,7 @@ sub sqlite_start_fold_change() {
 
 sub perform_checks_preliminary() {
   print &mytime . "Performing preliminary checks\n";
+  
   my $sqlite3_exec = `which sqlite3`;
   pod2usage "SQLite 3 not found\n" unless $sqlite3_exec;
   pod2usage "BWA not found\n"
@@ -1008,14 +1010,15 @@ sub perform_checks_preliminary() {
              || ( $user_ref_sequence && length($user_ref_sequence) > 100 ) );
   pod2usage "Insufficient readsets\n"
     unless @readsets && scalar(@readsets) > 1;
-
+  
   if (@readsets2) {
-    if ( scalar(@readsets2) != scalar(@readsets) ) {
-      pod2usage
-"Number of files for second readset must be 0 or equal to number of 1st readset\n";
+    if ( scalar(@readsets2) < scalar(@readsets) ) {
+      warn "Number of files for second readset does not equal to number of 1st readset. They will be treated as single end readsets.\n";
+    }elsif ( scalar(@readsets2) > scalar(@readsets) ) {
+      die "Number of files for second readset is larger than number for 1st readset. Single end datasets have to be provided with -1read not -2read. Stopping...\n";
     }
-    $doing_paired_end = 1;
   }
+  print "Using ".scalar(@readsets)." readsets\n";
   for ( my $i = 0 ; $i < @readsets ; $i++ ) {
     if ( !-s $readsets[$i] && -s $readsets[$i] . '.bam' ) {
       $readsets[$i] .= '.bam';
@@ -1024,26 +1027,29 @@ sub perform_checks_preliminary() {
     }
     pod2usage "File " . $readsets[$i] . " not found\n"
       unless $readsets[$i] && -s $readsets[$i];
-    $readset_lookup{ $readsets[$i] } = 1;
-    if (@use_existing_bam) {
-      die "Cannot find user-provided BAM file number " . ( $i + 1 ) . "\n"
+    $paired_readset_lookup{ $readsets[$i] } = 1;
+    if (@use_existing_bam && !$readsets[$i]) {
+      die "Too many bam files provided. No readset number ".($i+1)." provided\n";
+    }elsif (@use_existing_bam){
+      die "Cannot find user-provided BAM file (".$use_existing_bam[$i].") number " . ( $i + 1 ) . " for ".$readsets[$i]."\n"
         unless $use_existing_bam[$i] && -s $use_existing_bam[$i];
     }
   }
-  if ($doing_paired_end) {
+  if (@readsets2) {
     for ( my $i = 0 ; $i < @readsets2 ; $i++ ) {
       if ( !-s $readsets2[$i] && -s $readsets2[$i] . '.bam' ) {
         $readsets2[$i] .= '.bam';
+        $read_format = '.bam';
       } elsif ( !-s $readsets2[$i] && -s $readsets2[$i] . '.bz2' ) {
         $readsets2[$i] .= '.bz2';
       }
-      pod2usage "File " . $readsets2[$i] . " not found\n"
-        unless $readsets2[$i] && -s $readsets2[$i];
-      $readset_lookup{ $readsets[$i] } = $readsets2[$i];
+      if ($readsets2[$i] && -s $readsets2[$i]){
+        die "Sorry, paired end Bowtie does not work with BAM files\n" if ($read_format eq 'bam' && !$use_bwa);
+        $paired_readset_lookup{ $readsets[$i] } = $readsets2[$i]
+      } 
     }
   }
-  die "Sorry, paired end Bowtie does not work with BAM files\n"
-    if $doing_paired_end && $read_format eq 'bam' && !$use_bwa;
+  
   if ($extra_genes) {
     pod2usage "Cannot find $extra_genes file\n" unless -s $extra_genes;
   }
@@ -1117,9 +1123,9 @@ sub prepare_library_alias() {
       chomp($ln);
       my @data = split( "\t", $ln );
       next unless $data[0];
-      if ( !-s $data[0] && $readset_lookup{ $data[0] } ) {
+      if ( !-s $data[0] && $paired_readset_lookup{ $data[0] } ) {
         die "Cannot find file " . $data[0] . "\n";
-      } elsif ( !$readset_lookup{ $data[0] } ) {
+      } elsif ( !$paired_readset_lookup{ $data[0] } ) {
         warn "Lib alias entry "
           . $data[0]
           . " not in readset request. Skipping\n";
@@ -1128,7 +1134,7 @@ sub prepare_library_alias() {
         warn "Lib alias entry "
           . $data[0]
           . " has no name entry. Will use basename of filename\n";
-        $data[1] = basename( $data[0] );
+        $data[1] = fileparse( $data[0] );
       }
       $data[1] =~ s/\W+/_/g;
       $library_aliases{ $data[0] } = $data[1];
@@ -1162,14 +1168,26 @@ sub prepare_library_alias() {
   } else {
     $print = "file\tname\tgroup\n";
     foreach my $readset (@readsets) {
-      $library_metadata{$readset}{'group'} = $readset;
+      $library_aliases{ $readset } = fileparse($readset);
+      $library_metadata{$readset}{'group'} = fileparse($readset);
       $groups_readsets{$readset}{$readset}++;
-      $print .= $readset . "\t" . $readset . "\t" . $readset . "\n";
+      $print .= $readset . "\t" . $library_aliases{ $readset } . "\t" . $library_metadata{$readset}{'group'} . "\n";
     }
   }
-  open( OUT, ">$result_dir/lib_alias.txt" );
-  print OUT $print;
-  close OUT;
+  foreach my $readset (@readsets){
+    unless ($library_metadata{ $readset } || $library_aliases{$readset}){
+      warn "Warn: Readset $readset has no library metadata entry\n" ;
+      $library_aliases{ $readset } = fileparse($readset);
+      $library_metadata{$readset}{'group'} = fileparse($readset);
+      $groups_readsets{$readset}{$readset}++;
+      $print .= $readset . "\t" . $library_aliases{ $readset } . "\t" . $library_metadata{$readset}{'group'} . "\n";
+    }
+  }
+  if ($print){ 
+    open( OUT, ">$result_dir/lib_alias.txt" );
+    print OUT $print;
+    close OUT;
+  }
   @sample_overlays = sort keys %library_metadata_headers;
 }
 
@@ -1178,7 +1196,7 @@ sub prepare_input_data() {
   print &mytime . "Preparing readsets\n";
   &prepare_library_alias();
   for ( my $i = 0 ; $i < @readsets ; $i++ ) {
-    if ($doing_paired_end) {
+    if ($readsets2[$i]) {
       my ( $readset_name, $library_size, $do_backup ) =
         &perform_readset_metadata( $readsets[$i], $readsets2[$i] );
     } else {
@@ -1357,8 +1375,8 @@ sub starts_alignments() {
       }
     }
     $todo++;
-    my $readset_basename = basename($readset);
-    my $alnbase          = basename($baseout) . '_vs_' . $readset_basename;
+    my $readset_basename = fileparse($readset);
+    my $alnbase          = fileparse($baseout) . '_vs_' . $readset_basename;
     my $alnout_text      = $alnbase . '.bam';
     print "Paired readsets "
       . $readsets[$i] . " and "
@@ -1377,7 +1395,7 @@ sub starts_alignments() {
     for ( my $i = 0 ; $i < (@readsets) ; $i++ ) {
       print '.' x ( $i + 1 ) . "\r";
       my $readset          = $readsets[$i];
-      my $readset_basename = basename($readset);
+      my $readset_basename = fileparse($readset);
       my ( $alignment_bam_file, $alignment_sam_file );
       if ( $already_done_alignments{$readset} ) {
         my $alnbase = $baseout . '_vs_' . $readset_basename;
@@ -1486,7 +1504,7 @@ sub prepare_alignment_from_existing() {
     unless $use_existing_bam[$i] && -s $use_existing_bam[$i];
   my $readset          = $readsets[$i];
   my $readset2         = $readsets2[$i];
-  my $readset_basename = basename($readset);
+  my $readset_basename = fileparse($readset);
   my $alnbase          = $baseout . '_vs_' . $readset_basename;
   my $alignment_sam_file = $alnbase . '.sam';    # reference sorted
   my $alignment_bam_file = $alnbase . '.bam';    # reference sorted
@@ -1537,7 +1555,7 @@ sub prepare_alignment() {
 sub perform_alignments() {
   my $file_to_align    = shift;
   my $readset          = shift;
-  my $readset_basename = basename($readset);
+  my $readset_basename = fileparse($readset);
   my $readset2         = shift;
   print "\n" . &mytime
     . "Aligning: Performing alignments of $file_to_align vs $readset_basename\n";
@@ -1744,13 +1762,13 @@ sub perform_kangade() {
       my $readset_metadata_C = &sqlite_get_readset_metadata($readset_C);
       my $readset_name_C     = $readset_metadata_C->{'alias'};
       my $readset_reads_C    = $readset_metadata_C->{'total_reads'};
-      my $readset_basename_C = basename($readset_C);
+      my $readset_basename_C = fileparse($readset_C);
       print &mytime() . "\tProcessing $readset_name_C\n";
       for ( my $k = $i + 1 ; $k < scalar(@readsets) ; $k++ ) {
         my $readset_E          = $readsets[$k];
         my $readset_metadata_E = &sqlite_get_readset_metadata($readset_E);
         my $readset_name_E     = $readset_metadata_E->{'alias'};
-        my $readset_basename_E = basename($readset_E);
+        my $readset_basename_E = fileparse($readset_E);
         my $out = $baseout . $readset_basename_C . '_vs_' . $readset_basename_E;
         unless ( -s "$out.stats.csv" ) {
           my $readset_reads_E = $readset_metadata_E->{'total_reads'};
@@ -1885,32 +1903,32 @@ sub perform_readset_metadata($$) {
   my $readset_name =
       $library_aliases{$readset}
     ? $library_aliases{$readset}
-    : basename($readset);
+    : fileparse($readset);
   $get_readset->execute($readset);
   my $result = $get_readset->fetchrow_hashref();
   if ($result) {
     return ( $result->{'alias'}, $result->{'total_reads'} );
   }
   $do_backup = 1;
-  print "Counting reads in readset $readset / $readset2\n";
-
+  print "Counting reads in PE readsets $readset / $readset2\n" if $readset2;
+  print "Counting reads in SE readset $readset\n" if !$readset2;
   # get library sizes
   if ( $read_format eq 'fastq' ) {
     if ( $readset =~ /.bz2$/ ) {
       $library_size = `$bunzip2_exec -dck $readset| wc -l `;
       chomp($library_size);
       $library_size += `$bunzip2_exec -dck $readset2| wc -l `
-        if $doing_paired_end;
+        if $readset2;
     } else {
       $library_size = `wc -l < $readset`;
       chomp($library_size);
-      $library_size += `wc -l < $readset2` if $doing_paired_end;
+      $library_size += `wc -l < $readset2` if $readset2;
     }
     $library_size /= 4;
     print LOG "Reads in $readset / $readset2 PE files: $library_size\n"
-      if $doing_paired_end;
-    print LOG "Reads in $readset file: $library_size\n"
-      if !$doing_paired_end;
+      if $readset2;
+    print LOG "Reads in $readset SE file: $library_size\n"
+      if !$readset2;
   } elsif ( $read_format eq 'bam' ) {
     die "BAM $readset not found\n" unless -s $readset;
     &process_cmd("$samtools_exec index $readset")
@@ -1919,16 +1937,16 @@ sub perform_readset_metadata($$) {
     my $d = `samtools idxstats $readset|grep '^\*'`;
     $d =~ /(\d+)$/;
     $library_size = $1;
-    if ($doing_paired_end) {
+    if ($readset2) {
       $d = 0;
       $d = `samtools idxstats $readset2|grep '^\*'`;
       $d =~ /(\d+)$/;
       $library_size += $1;
     }
     print LOG "Reads in $readset file: $library_size\n"
-      if !$doing_paired_end;
+      if !$readset2;
     print LOG "Reads in $readset / $readset2 PE files: $library_size\n"
-      if $doing_paired_end;
+      if $readset2;
   }
   die "Cannot get library size for $readset"
     unless $library_size && $library_size > 0;
@@ -1950,7 +1968,7 @@ sub align_bowtie2() {
   $readgroup =~ s/\.bz2$//;
   $readgroup =~ s/\.fastq$//;
   $readgroup =~ s/\.bam$//;
-  if ($doing_paired_end) {
+  if ($readset2) {
     if ( $read_format eq 'fastq' ) {
       my $qformat = '--' . &check_fastq_format($readset);
       &process_cmd(
@@ -1976,7 +1994,7 @@ sub align_bowtie2() {
   }
   die "Alignment for $file_to_align vs $readset failed\n" unless -s $sam;
   chdir($result_dir);
-  link( basename($sam), basename($baseout) . ".sam.namesorted" );
+  link( fileparse($sam), fileparse($baseout) . ".sam.namesorted" );
   chdir("../");
 }
 
@@ -2024,7 +2042,7 @@ sub align_kanga() {
     }
     my $qformat =
       ( &check_fastq_format($readset) eq 'phred33' ) ? ' -q0 ' : ' -q1 ';
-    if ($doing_paired_end) {
+    if ($readset2) {
       unless ( -s "$sam.1" ) {
         &process_cmd(
 "$kanga_exec -I $file_to_align.kangax -m 0 $qformat -R 100 -r 5 -X -M 5 -i $readset -o $sam.1 -F $sam.1.log -T $threads -d 100 -D 800 >/dev/null"
@@ -2055,7 +2073,7 @@ sub align_kanga() {
     }
     die "Alignment for $file_to_align vs $readset failed\n" unless -s $sam;
     chdir($result_dir);
-    link( basename($sam), basename($baseout) . ".sam.namesorted" );
+    link( fileparse($sam), fileparse($baseout) . ".sam.namesorted" );
     chdir("../");
   } else {
     die "Kanga is currently only supporting FASTQ\n";
@@ -2073,7 +2091,7 @@ sub align_bwa() {
     &process_cmd(
 "$bwa_exec aln $qformat -t $threads -f $baseout.sai -q 10 $file_to_align $readset 2>/dev/null"
     ) unless -s "$baseout.sai";
-    if ($doing_paired_end) {
+    if ($readset2) {
       &process_cmd(
 "$bwa_exec aln $qformat -t $threads -f $baseout.2.sai -q 10 $file_to_align $readset2 2>/dev/null"
       ) unless -s "$baseout.2.sai";
@@ -2082,7 +2100,7 @@ sub align_bwa() {
     &process_cmd(
 "$bwa_exec aln -t $threads -b -f $baseout.sai -q 10 $file_to_align $readset 2>/dev/null"
     ) unless -s "$baseout.sai";
-    if ($doing_paired_end) {
+    if ($readset2) {
       &process_cmd(
 "$bwa_exec aln -t $threads -b -f $baseout.2.sai -q 10 $file_to_align $readset2 2>/dev/null"
       ) unless -s "$baseout.2.sai";
@@ -2093,7 +2111,7 @@ sub align_bwa() {
   $readgroup =~ s/\.bz2$//;
   $readgroup =~ s/\.fastq$//;
   $readgroup =~ s/\.bam$//;
-  if ($doing_paired_end) {
+  if ($readset2) {
     &process_cmd(
 "$bwa_exec sampe -n 20 -N 100 -a 700 -s -r '$readgroup' -o $sam $file_to_align $baseout.sai $baseout.2.sai $readset $readset2 2>/dev/null"
     );
@@ -2182,7 +2200,7 @@ sub perform_correct_bias($$$) {
   my $namesorted_sam    = shift;
   my $readset_metadata  = &sqlite_get_readset_metadata($readset);
   my $readset_name      = $readset_metadata->{'alias'};
-  my $original_bam_base = basename($original_bam);
+  my $original_bam_base = fileparse($original_bam);
   my $namesorted_bam =
     ( $namesorted_sam =~ /\.bam.namesorted$/ )
     ? $namesorted_sam
@@ -2391,7 +2409,7 @@ sub perform_correct_bias($$$) {
         unlink($original_bam) if !$debug;
       }
       chdir($result_dir);
-      link( basename($express_bam), basename($original_bam) );
+      link( fileparse($express_bam), fileparse($original_bam) );
       chdir($cwd);
     }
   }
@@ -2596,7 +2614,6 @@ sub process_main_stats($) {
   for ( my $i = 0 ; $i < scalar(@readsets) ; $i++ ) {
     my $readset_metadata_ref = &sqlite_get_readset_metadata( $readsets[$i] );
     my $readset_name         = $readset_metadata_ref->{'alias'};
-    my $readset_total_reads  = $readset_metadata_ref->{'total_reads'};
     my $hit_stat             = Statistics::Descriptive::Full->new();
     my $stats_ref =
       &sqlite_get_expression_statistics( $seq_md5hash, $readsets[$i] );
@@ -2966,7 +2983,7 @@ sub process_completion() {
   ## cleanup
   unless ($debug) {
     foreach my $readset (@readsets) {
-      my $baseout = $result_dir . $uid . '_' . basename($readset);
+      my $baseout = $result_dir . $uid . '_' . fileparse($readset);
 
       #unlink("$baseout.bam");
       #unlink("$baseout.bam.bai");
@@ -2978,7 +2995,7 @@ sub perform_TMM_normalization_edgeR() {
   print "\n" . &mytime
     . "Performing trimmed mean of fold-change normalization\n";
   my $matrix_file = shift;
-  my $matrix_base = basename($matrix_file);
+  my $matrix_base = fileparse($matrix_file);
   my $TMM_file    = $edgeR_dir . 'TMM_info.txt';
 
 # AP: accounting for groups (column 2 [1] in target.files and TMM_info.txt files)
@@ -3053,7 +3070,7 @@ sub perform_edgeR_pairwise() {
 
 sub process_edgeR_graphs() {
   my $edgeR_diff_expressed_genes_ref = shift;
-  my $norm_matrix_file = basename($fpkm_expression_level_matrix_TMM);
+  my $norm_matrix_file = fileparse($fpkm_expression_level_matrix_TMM);
   chdir($edgeR_dir);
   my $diff_expr_matrix = "$norm_matrix_file.diff_expressed";
   open( OUT, ">$diff_expr_matrix" ) || die($!);
@@ -3303,7 +3320,7 @@ sub prepare_scatter_for_canvas() {
   # not used  %{ $for_json_array{'t'} } = ();
   foreach my $edgeR_result (@edgeR_results) {
     next unless -s $edgeR_result;
-    my $res            = basename($edgeR_result);
+    my $res            = fileparse($edgeR_result);
     my $single_2d_file = $edgeR_dir . $res . '.scatterplots_2D.html';
     my $single_3d_file = $edgeR_dir . $res . '.scatterplots_3D.html';
     open( HTML1_2D, ">$single_2d_file" );
@@ -3623,7 +3640,7 @@ sub write_normalized_fpkm_file {
 # applying the TMM normalization previously done with edgeR.
   my ( $matrix_file, $tmm_info_file ) = @_;
   my $normalized_fpkm_file =
-    $edgeR_dir . basename($matrix_file) . ".normalized.FPKM";
+    $edgeR_dir . fileparse($matrix_file) . ".normalized.FPKM";
   my ( %eff_lib_sizes, %fpkm_hash );
 
   # get effective library sizes
@@ -3761,7 +3778,7 @@ sub rename_file_md52gene() {
   foreach my $file (@files) {
     next unless $file && -s $file;
     next if -d $file;
-    my $filename = basename($file);
+    my $filename = fileparse($file);
     my $dirname  = dirname($file);
     $filename =~ /^(\w+)(.+)$/;
     my $md5 = $1 || next;
