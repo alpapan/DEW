@@ -1,11 +1,12 @@
-#!/usr/bin/perl -w
+#!/usr/bin/env perl
 
 =pod
 
 =head1 TODO
-
- * support PE and SE at the same time (use lib_alias file as manual switch would be annoying)
- * graphs speedup: if max depth == 0 then don't create bioperl subfeatures?
+ 
+ * Argument "MRF-FB_R1.trim.paired.fastq" isn't numeric in array element at /home/pap056/bin/dew.pl line 1558.
+ * debug and decide what to do with -nocheck
+ * option for no differential analysis but still do plots (i.e. no heatmaps)
  * Write dew.pl description
  * add DESeq and make Venn diagram
 
@@ -95,7 +96,7 @@ option legend (:s => string; :i => integer; :f => float; {1,} => one or more); s
             -median_cutoff:i       => Median number of hits across reference must be above cutoff
             -need_all_readsets     => All sets of reads must have alignments against the gene in order for it to be processed. Otherwise, 1+ is sufficient. 
             -over                  => Allow overwriting of any files with the same name
-            -nographs              => Do not produce any graphs. Graphs can take a very long time when there are many readsets (e.g. 30+ libraries and 30k+ genes). Also there is a memory leak somewhere...
+            -nographs              => Do not produce any graphs. Graphs can take a very long time when there are many readsets (e.g. 30+ libraries and 30k+ genes).
             -gene_graphs_only      => The opposite of above; only do enough work to get the gene depth/coverage graphs and then exit
             -contextual            => Complete realignment of all genes in order to run a correction of biases properly. Does not read/store data in the cache
             -use_bwa               => Use BWA instead of Bowtie2
@@ -167,6 +168,7 @@ low:  for end-user beta tester
 =cut
 
 use strict;
+use warnings;
 use Pod::Usage;
 use Getopt::Long;
 use Digest::MD5 qw(md5_hex);
@@ -198,7 +200,7 @@ use Bio::SeqFeature::Lite;
 $| = 1;
 
 #debug
-use Data::Dumper;
+#use Data::Dumper;
 my $debug = 0;
 $ENV{'PATH'} = $ENV{'PATH'} . ':' . $RealBin;
 #################################
@@ -257,7 +259,7 @@ my $binary_min_reads       = 4;
 my (
      $uid,               $lib_alias_file,     $demand_all_readsets,
      $use_kanga,         @use_existing_bam,   $overwrite_results,
-     @readsets2,         $db_file,
+     @readsets2,         $db_file,$no_checks,
      $db_use_file,       $dbname,             $no_graphs,
      $user_ref_sequence, $no_kangade,         $main_output_dir,
      $use_bwa,           $prepare_input_only, @sample_overlays,
@@ -265,6 +267,7 @@ my (
      %binary_table
 );
 GetOptions(
+  'nocheck' => \$no_checks, #TMP for Debug; should not be needed
   'infile:s'      => \$input_reference_file,
   'extra_genes:s' => \$extra_genes,
   'sequence:s'    => \$user_ref_sequence,
@@ -336,6 +339,7 @@ my (
      $add_seqhash_to_seqdb,
      $init_expression_statistics,
      $add_readset,
+     $update_readset,
      $add_depth_data,
      $check_depth_data,
      $check_depth_readset,
@@ -366,7 +370,6 @@ my (
      $get_readset_filename
 ) = &sqlite_init();
 my $file_for_alignment = &prepare_input_data();
-
 if ( !-s $counts_expression_level_matrix
      || ( $contextual_alignment && $debug && $debug >= 2 ) )
 {
@@ -633,6 +636,9 @@ sub sqlite_init() {
   my $add_readset = $dbh->prepare(
 "INSERT INTO readsets (readset_file,is_paired,alias,total_reads,ctime) VALUES (?,?,?,?,?)"
   );
+  my $update_readset = $dbh->prepare(
+"UPDATE readsets SET is_paired=?, alias=? WHERE readset_file=?"
+  );
   my $add_sequence_alias = $dbh->prepare(
                "INSERT INTO sequence_aliases (seq_md5hash,alias) VALUES (?,?)");
   my $get_sequence_alias =
@@ -644,6 +650,7 @@ sub sqlite_init() {
            $add_seqhash_to_seqdb,
            $init_expression_statistics,
            $add_readset,
+           $update_readset,
            $add_depth_data,
            $check_depth_data,
            $check_depth_readset,
@@ -709,6 +716,7 @@ sub sqlite_destroy() {
   $update_express_expression_statistics->finish();
   $update_kangade_expression_statistics->finish();
   $add_readset->finish();
+  $update_readset->finish();
   $get_sequence_alias->finish();
   $add_sequence_alias->finish();
   $add_to_kangade_analysis->finish();
@@ -861,9 +869,13 @@ sub sqlite_add_readset_metadata($$$) {
   my $total_reads      = shift;
   my $is_paired        = $paired_readset_lookup{$readset_filename};
   my $result           = &sqlite_get_readset_metadata($readset_filename);
-  $add_readset->execute( $readset_filename, $is_paired, $lib_alias,
+  if (!$result){
+   $add_readset->execute( $readset_filename, $is_paired, $lib_alias,
                          $total_reads, localtime() )
-    if !$result;
+  }elsif(!$result->{'alias'} || ($result->{'alias'} && $result->{'alias'} ne $lib_alias)){
+   $update_readset->execute( $is_paired, $lib_alias,$readset_filename )
+  }
+  
 }
 
 sub sqlite_check_expression_statistics($$) {
@@ -888,7 +900,7 @@ sub sqlite_add_rpkm_expression_statistics($) {
                                                $seq_md5hash, $readset );
   my $check = &sqlite_get_expression_statistics( $seq_md5hash, $readset );
   if ( !$check || !defined( $check->{'rpkm'} ) ) {
-    warn Dumper($check) if $debug;
+    #warn Dumper($check) if $debug;
     die
 "Could not add RPKM expression statistics for: $seq_md5hash,$readset,$rpkm,$total_reads_hit\n";
   }
@@ -911,7 +923,7 @@ sub sqlite_add_express_expression_statistics() {
                                                     $seq_md5hash, $readset );
   my $check = &sqlite_get_expression_statistics( $seq_md5hash, $readset );
   if ( !$check || !defined( $check->{'express_fpkm'} ) ) {
-    warn Dumper $check if $debug;
+    #warn Dumper $check if $debug;
     die
 "Could not add express expression statistics for: $seq_md5hash,$readset,$fpkm,$eff_counts\n";
   }
@@ -923,7 +935,7 @@ sub sqlite_add_kangade_expression_statistics() {
                                                   $seq_md5hash, $readset );
   my $check = &sqlite_get_expression_statistics( $seq_md5hash, $readset );
   if ( !$check || !defined( $check->{'kangade_counts'} ) ) {
-    warn Dumper $check if $debug;
+    #warn Dumper $check if $debug;
     die
 "Could not add kangade expression statistics for: $seq_md5hash,$readset,$kangade_counts\n";
   }
@@ -1262,6 +1274,8 @@ sub prepare_input_data() {
       my $seq_md5hash = $data[0];
       push( @reference_sequence_list, $data[1] );
       $user_alias{$seq_md5hash} = $data[1];
+      next if $no_checks;
+      $do_backup = 1;
       for ( my $i = 0 ; $i < ( scalar(@readsets) ) ; $i++ ) {
         &sqlite_init_expression_statistics( $seq_md5hash, $readsets[$i] );
         for ( my $k = $i + 1 ; $k < scalar(@readsets) ; $k++ ) {
@@ -1316,7 +1330,7 @@ sub prepare_input_data() {
     print CHECK "Done\n";
     close CHECK;
   }
-  &sqlite_backup(1) if !$db_use_file;    #&& $do_backup;
+  &sqlite_backup(1) if !$db_use_file && $do_backup;
 
   # prepare file for alignments
   if ($use_kanga) {
@@ -1386,11 +1400,11 @@ sub starts_alignments() {
     print "Unpaired readset " . $readsets[$i] . " : $alnout_text\n"
       if !$readsets2[$i];
   }
-  print "\tNo alignments need to be done. Processing all existing...\n"
-    if !$todo;
+  print "\tNo alignments need to be done. Processing all existing...\n"  if !$todo; # SLOW
   print "\t$todo alignments need to be done...\n" if $todo;
-  my ( %alignment_sam_files, %alignment_bam_files, $aligned_ids_hashref,
-       %hash );
+  # testing
+  return if (!$todo && $no_checks);
+  my ( %alignment_sam_files, %alignment_bam_files, $aligned_ids_hashref,%hash );
   if ($contextual_alignment) {
     for ( my $i = 0 ; $i < (@readsets) ; $i++ ) {
       print '.' x ( $i + 1 ) . "\r";
@@ -1906,8 +1920,15 @@ sub perform_readset_metadata($$) {
     : fileparse($readset);
   $get_readset->execute($readset);
   my $result = $get_readset->fetchrow_hashref();
-  if ($result) {
-    return ( $result->{'alias'}, $result->{'total_reads'} );
+  if ($result && $result->{'total_reads'}) {
+    #update alias if needed
+    if(!$result->{'alias'} || ($result->{'alias'} && $result->{'alias'} ne $readset_name)){
+     $update_readset->execute( $paired_readset_lookup{$readset}, $readset_name,$readset );
+     $get_readset->execute($readset);
+     $result = $get_readset->fetchrow_hashref();
+     $do_backup=1;
+    }
+    return ( $result->{'alias'}, $result->{'total_reads'},$do_backup );
   }
   $do_backup = 1;
   print "Counting reads in PE readsets $readset / $readset2\n" if $readset2;
@@ -2446,16 +2467,12 @@ sub perform_stats() {
     $timer_counter++;
     if ( $timer_counter % 100 == 0 ) {
       print $timer->report( "eta: %E min, %40b %p\r", $timer_counter );
-      $dbh->do("PRAGMA shrink_memory") if ( $timer_counter % 100 == 0 );
+      $dbh->do("PRAGMA shrink_memory") if ( $timer_counter % 1000 == 0 );
     }
   }
   if ( !$no_graphs ) {
     &rename_file_md52gene("$result_dir/graphs/");
   }
-}
-
-sub make_coverage_graphs_js($$$) {
-  ## TODO to avoid BioPerl.
 }
 
 sub make_coverage_graphs($$$) {
@@ -2486,8 +2503,9 @@ sub make_coverage_graphs($$$) {
                      -bump        => 0,
   );
   foreach my $readset (@readsets) {
-    my $readset_metadata_ref = &sqlite_get_readset_metadata($readset);
-    my $readset_name         = $readset_metadata_ref->{'alias'};
+    #my $readset_metadata_ref = &sqlite_get_readset_metadata($readset);
+    #my $readset_name         = $readset_metadata_ref->{'alias'};
+    my $readset_name         = $library_aliases{$readset};
     my $expression_statistics_ref =
       &sqlite_get_expression_statistics( $seq_md5hash, $readset );
     die "Cannot find any coverage statistics for $seq_id vs $readset !\n"
@@ -2521,23 +2539,24 @@ sub make_coverage_graphs($$$) {
                               -display_name => $readset_name,
                               -start        => 1,
                               -end          => $seq_size,
-                              -source_tag => $readset_name . $stats_description,
-                              -type       => 'expression',
+                              -source_tag   => $readset_name . $stats_description,
+                              -type         => 'expression',
       );
 
-    if ( $expression_statistics_ref->{'total_hits'} ) {
+    if ( $expression_statistics_ref->{'total_hits'} && ($median > 0 || $mean > 0 || $expression_statistics_ref->{'total_hits'} > 50)) {
+     
       my $hit_max        = $expression_statistics_ref->{'max_hits'};
       my $hit_sd         = $expression_statistics_ref->{'hit_sd'};
       my $depth_hash_ref = &sqlite_get_depth_data( $seq_md5hash, $readset );
-      for ( my $pos = 0 ; $pos < $seq_size ; $pos += 10 ) {
+      
+      my $step_size = $seq_size >= 200 ? 10 : 5;
+      
+      for ( my $pos = 0 ; $pos < $seq_size ; $pos += $step_size ) {
         last if $pos >= $seq_size;
-
-#if ( $pos % 10 == 0 ) {
-#          my $depth = $depth_hash_ref->{$pos} ? $depth_hash_ref->{$pos} : int(0);
         my ( $xl, $depth );
 
         #sliding window for average
-        for ( my $x = $pos ; $x < $pos + 10 ; $x++ ) {
+        for ( my $x = $pos ; $x < $pos + $step_size ; $x++ ) {
           $depth += $depth_hash_ref->{$x} ? $depth_hash_ref->{$x} : int(0);
           $xl++;
         }
@@ -2550,14 +2569,13 @@ sub make_coverage_graphs($$$) {
                                       -score => $depth
           );
         $readset_feature->add_SeqFeature($t);
-
         #}
       }
       my $pivot =
           $expression_statistics_ref->{'median_hits'}
         ? $expression_statistics_ref->{'median_hits'} - ( 2 * $hit_sd )
         : 1;
-      my $track = $graph->add_track(
+      $graph->add_track(
         xyplot         => $readset_feature,                               #work!
         -description   => 1,
         -label         => 1,
@@ -2576,15 +2594,17 @@ sub make_coverage_graphs($$$) {
               && !$expression_statistics_ref->{'median_hits'}
               && $expression_statistics_ref->{'total_hits'} > 500 )
     {
-      warn Dumper $expression_statistics_ref if $debug;
+      #warn Dumper $expression_statistics_ref if $debug;
       warn
 "Something really bad happened: maybe the statistics were not properly processed...\n";
     } else {
       warn "No coverage of $seq_id ($seq_md5hash) vs $readset !\n"
         if $debug;
-      my $track = $graph->add_track(
+      $graph->add_track(
                                      xyplot       => $readset_feature,    #work!
                                      -description => 1,
+                                     -max_score   => 1,
+                                     -min_score   => 0,
                                      -label       => 1,
                                      -bgcolor     => 'white',
                                      -fgcolor     => 'black',
@@ -2599,11 +2619,10 @@ sub make_coverage_graphs($$$) {
   open( GRAPH, ">$graph_file" ) || die($!);
   print GRAPH $graph->png;
   close GRAPH;
-  undef($graph);
+  $graph->finished;
 }
 
 sub process_main_stats($) {
-
   # i don't think there is a memory leak here.
   #having both bp data and rpkm, we can post process
   my $seq_id           = shift;
@@ -3092,7 +3111,8 @@ sub process_edgeR_graphs() {
   open( OUTR, ">$R_script" ) or die "Error, cannot write to $R_script. $!";
   print OUTR "
 source('$RealBin/R/dew_funcs.R')
-edgeR_heatmaps_all('$md5_aliases_file','$diff_expr_matrix',$tree_clusters)
+edgeR_gene_plots_all('$md5_aliases_file','$norm_matrix_file')
+edgeR_heatmaps_de('$md5_aliases_file','$diff_expr_matrix',$tree_clusters)
     ";
   print OUTR "save.image(file='$diff_expr_matrix.Rdata');\n" if $debug;
   close OUTR;
