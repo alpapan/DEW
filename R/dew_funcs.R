@@ -82,10 +82,10 @@ check_distribution = function (edgeR_obj,baseout='tmp'){
 	x_for_density_box<-boxplot(x_for_density$value,plot=F)
 	
 	x_for_density_log2<-data.frame(
-		group = factor( 
-				rep(groups ,each=length(rownames(data)  ))  
-		),
-		value = as.vector(log2(1+ as.matrix(data)))
+			group = factor( 
+					rep(groups ,each=length(rownames(data)  ))  
+			),
+			value = as.vector(log2(1+ as.matrix(data)))
 	);
 	x_for_density_log2_box<-boxplot(x_for_density_log2$value,plot=F)
 	
@@ -104,7 +104,7 @@ check_distribution = function (edgeR_obj,baseout='tmp'){
 			value = as.vector(as.matrix(scale_with_edgeR(data)))
 	);
 	x_for_density_edgeR_box<-boxplot(x_for_density_edgeR$value,plot=F)
-
+	
 	#	x_for_density_scaled<-data.frame(
 #			group = factor( 
 #					rep(groups ,each=length(rownames(data)  ))  
@@ -185,7 +185,7 @@ check_distribution = function (edgeR_obj,baseout='tmp'){
 #			print(qq(group ~ value, aspect = 1,data=x_for_density_scaled_clustering,subset=(group == groups[i] | group == groups[k])))
 #		}
 #	}
-
+	
 }
 
 normalize = function(x){
@@ -242,7 +242,7 @@ edgeR_DE_explore = function (genesaliases_file,targetsFile, baseout='tmp', dispe
 	library(edgeR,quietly=T,warn.conflicts=F,verbose=F)
 	library(fdrtool,quietly=T,warn.conflicts=F,verbose=F)
 	
-	aliases = as.matrix(read.table(file=genesaliases_file,sep="\t",header=F,col.names=c('uid','alias')))
+	aliases <- as.matrix(read.table(file=genesaliases_file,sep="\t",header=F,col.names=c('uid','alias')))
 	
 	edgeR_obj = TMM_normalize(targetsFile,minCPM,minLibs )
 	if (length(edgeR_obj)==0){return}
@@ -264,19 +264,19 @@ edgeR_DE_explore = function (genesaliases_file,targetsFile, baseout='tmp', dispe
 		
 		cat ("Processing one factor using CML\n");
 		edgeR_obj_de = exactTest(edgeR_obj, dispersion=dispersion)
-			
-			# pvalues
-			pdf(file=paste(baseout,'.qc_graphs2.pdf',sep=''))
-			logFC.box <-boxplot(edgeR_obj_de$table$logFC,main="log2 fold-change boxplot")
-			logFC.dev <- abs(0-logFC.box$stats[3])
-			fdrresults<-fdrtool(edgeR_obj_de$table$PValue,statistic='pvalue',plot=T)
-			edgeR_obj_de$table$QValue <- fdrresults$qval
-			edgeR_obj_de$table$lfdr <- fdrresults$lfdr
-			edgeR_obj_de$logFC.dev <- logFC.dev 
-			qval.box <- boxplot(edgeR_obj_de$table$QValue,main="Q-values (bayesian, tail of area) boxplot")
-			dev.off()
-			
-			edgeR_obj_de <- edgeR_DE_postanalysis(aliases,edgeR_obj, edgeR_obj_de, baseout, dispersion, FDR,kclusters)
+		
+		# pvalues
+		pdf(file=paste(baseout,'.qc_graphs2.pdf',sep=''))
+		logFC.box <-boxplot(edgeR_obj_de$table$logFC,main="log2 fold-change boxplot")
+		logFC.dev <- abs(0-logFC.box$stats[3])
+		fdrresults<-fdrtool(edgeR_obj_de$table$PValue,statistic='pvalue',plot=T)
+		edgeR_obj_de$table$QValue <- fdrresults$qval
+		edgeR_obj_de$table$lfdr <- fdrresults$lfdr
+		edgeR_obj_de$logFC.dev <- logFC.dev 
+		qval.box <- boxplot(edgeR_obj_de$table$QValue,main="Q-values (bayesian, tail of area) boxplot")
+		dev.off()
+		
+		edgeR_obj_de <- edgeR_DE_postanalysis(aliases,edgeR_obj, edgeR_obj_de, baseout, dispersion, FDR,kclusters)
 	}else{
 		cat ("Processing multiple factors using additive GLMs\n");
 		pdf(file=paste(baseout,'.qc_graphs.pdf',sep=''))
@@ -417,7 +417,7 @@ edgeR_DE_postanalysis = function (aliases,edgeR_obj, edgeR_obj_de, baseout='tmp'
 	unlink(paste(baseout,'.results.txt',sep=''))
 	write.table(edgeR_obj_de$table, quote=F, file=paste(baseout,'.all.txt',sep=''), sep="\t",col.names=NA)
 	write.table(detags_toptgw, quote=F, file=paste(baseout,'.results.txt',sep=''), sep="\t",col.names=NA)
-cat ("Comparing groups for significant genes...\n")
+	cat ("Comparing groups for significant genes...\n")
 	logCPM_edgeR <- predFC(edgeR_obj, prior.count.total=2*ncol(edgeR_obj))
 	ordered.data <-matrix(ncol=length(colnames(logCPM_edgeR)),nrow=length(detags_names))
 	for (i in 1:length(detags_names)){
@@ -471,7 +471,7 @@ cat ("Comparing groups for significant genes...\n")
 	#clustering.data <- scale_with_DESeq(ordered.data) #deseq normalize getVarianceStabilizedData; suspiciously similar to logged.data; check with Goldfeld–Quandt test gqtest
 	
 	# cluster data
-cat ("Clustering...\n")
+	cat ("Clustering...\n")
 	#morgan: 8-9gb; 3.5h for arabidopsis
 	#library(hopach,quietly=T,warn.conflicts=F,verbose=F)
 	#	library(ctc,quietly=T,warn.conflicts=F,verbose=F)
@@ -483,8 +483,8 @@ cat ("Clustering...\n")
 	#	gene.names = rownames(clustering.data),hopach.arrays = hc_samples3full
 	#)
 	#tree_hc_gene_r<-xcluster2r(file=paste(baseout,'.hopach.tree.gtr',sep='')
-
-		
+	
+	
 	#morgan: 2.3 gb; 4h  
 	myheatcol <- redgreen(75)
 	hc_genes <- agnes(clustering.data, metric="euclidean") # cluster genes
@@ -492,9 +492,9 @@ cat ("Clustering...\n")
 	gene_partition_assignments <- cutree(as.hclust(hc_genes), k=kclusters)
 	partition_colors <- rainbow(length(unique(gene_partition_assignments)), start=0.4, end=0.95)
 	gene_colors <- partition_colors[gene_partition_assignments]
-
+	
 	# heatmap
-cat ("Producing info for heatmap and other graphs...\n")
+	cat ("Producing info for heatmap and other graphs...\n")
 	postscript(file=paste(baseout,'.heatmap.ps',sep=''), horizontal=FALSE, width=8, height=18, paper="special")
 	figure.heatmap1<-heatmap.2(clustering.data, dendrogram="both", Rowv=as.dendrogram(hc_genes), Colv=as.dendrogram(hc_samples), col=myheatcol, RowSideColors=gene_colors,
 			scale="none", density.info="none", trace="none", key=TRUE, keysize=1.2, cexCol=2.5, margins=c(15,15), lhei=c(0.4,2), lwid=c(2.5,4))
@@ -520,7 +520,38 @@ cat ("Producing info for heatmap and other graphs...\n")
 }
 
 
-edgeR_heatmaps_all = function(aliases,baseout='tmp',kclusters = 10){
+edgeR_gene_plots_all = function(genesaliases_file,baseout='tmp'){
+	# variables
+	aliases <- as.matrix(read.table(file=genesaliases_file,sep="\t",header=F,col.names=c('uid','alias')))
+	data <- read.table(file=baseout, header=T, com="", sep="\t",row.names=1)
+	gene_names <- convert_from_uid(aliases,rownames(data))
+	rownames(data)<-gene_names
+	sample_names <- colnames(data)
+	ordered.data <- data[with(data, order(rownames(data))), ]
+	
+	# transform data
+	#clustering.data <- as.matrix(log2(1+ordered.data)) 
+	
+	# gene plots
+	pdf(file=paste(baseout,'.per_gene_plots.pdf',sep=''))
+	if (length(sample_names) < 20){
+		par(mfrow=c(1, 2),oma=c(5,0.1,1,0.1))
+	}else{
+		par(mfrow=c(1, 1),oma=c(5,0.1,1,0.1))
+	}
+	#remember [row,column]
+	for (i in 1:length(ordered.data[,1])) {
+		d <- ordered.data[i,]
+		ymin <- min(d);
+		ymax <- max(d);
+		plot(as.numeric(d), type="l", ylim=c(ymin,ymax), main=gene_names[i] ,
+						col="blue", xaxt="n", xlab="", ylab="TMM-norm. eff. counts")
+		axis(side=1, at=1:length(d), labels=sample_names, las=2,cex.axis=0.5)
+	}  
+	dev.off()
+}
+
+edgeR_heatmaps_de = function(genesaliases_file,baseout='tmp',kclusters = 10){
 	library(gdata,quietly=T,warn.conflicts=F,verbose=F)
 	library(gplots,quietly=T,warn.conflicts=F,verbose=F)
 	library(cluster,quietly=T,warn.conflicts=F,verbose=F)
@@ -529,35 +560,41 @@ edgeR_heatmaps_all = function(aliases,baseout='tmp',kclusters = 10){
 	library(ape,quietly=T,warn.conflicts=F,verbose=F)
 	
 	# variables
+	aliases <- as.matrix(read.table(file=genesaliases_file,sep="\t",header=F,col.names=c('uid','alias')))
 	## last column is now FDR column
 	data <- read.table(file=baseout, header=T, com="", sep="\t",row.names=1)
-	
-	#order
 	ordered.data <- data[with(data, order(data[,length(data[1,])])), ]
-	gene_names <- convert_from_uid(aliases,rownames(ordered.data))
-	sample_names <- colnames(ordered.data)
+	#save FDR column
 	fdr.data <- ordered.data$FDR
 	#remove FDR column
 	ordered.data <- data[,1:(length(data[1,])-1)]
+	gene_names <- convert_from_uid(aliases,rownames(ordered.data))
 	rownames(ordered.data)<-gene_names
+	sample_names <- colnames(ordered.data)
 	
-	# transform data
-	clustering.data <- as.matrix(log2(1+ordered.data)) 
 	
 	# gene plots
 	pdf(file=paste(baseout,'.per_gene_plots.pdf',sep=''))
-	par(mfrow=c(3, 2))
+	if (length(sample_names) < 20){
+		par(mfrow=c(1, 2),oma=c(5,0.1,1,0.1))
+	}else{
+		par(mfrow=c(1, 1),oma=c(5,0.1,1,0.1))
+	}
 	#remember [row,column]
-	for (i in 1:length(clustering.data[,1])) {
+	for (i in 1:length(ordered.data[,1])) {
 		d <- ordered.data[i,]
 		fdr_value <- formatC(fdr.data[i],format='e',digits=2)
 		ymin <- min(d);
 		ymax <- max(d);
 		plot(as.numeric(d), type="l", ylim=c(ymin,ymax), main=paste(gene_names[i],paste('FDR:',fdr_value,sep=' ') ,sep="\n"), col="blue", xaxt="n", xlab="", ylab="TMM-norm. eff. counts")
-		axis(side=1, at=1:length(d), labels=sample_names, las=2)
+		axis(side=1, at=1:length(d), labels=sample_names, las=2,cex.axis=0.5)
 	}  
 	dev.off()
 	rm(d,i,ymin,ymax)
+	
+	# transform data
+	clustering.data <- as.matrix(log2(1+ordered.data)) 
+	
 	
 	# cluster data
 	hc_genes <- agnes(clustering.data, diss=FALSE, metric="euclidean") # cluster genes
