@@ -5,18 +5,17 @@
 =head1 TODO
  
  Important for release
- * Brian's error report
- * Cleanup PerlLib
- * deploy demos on sourceforge
+ * BUG: Argument "MRF-FB_R1.trim.paired.fastq" isn't numeric in array element at /home/pap056/bin/dew.pl line 1558.
  * add fixed library length for fpkm calcs (feature-request for express complete)
  * add -no-bias-correct option when a) user asks for it; b) when not in contextual
  * Rename -correct-bias to -isoforms
- * Argument "MRF-FB_R1.trim.paired.fastq" isn't numeric in array element at /home/pap056/bin/dew.pl line 1558.
+ * parallel runs of express (too complicated?)
  * debug and decide what to do with -nocheck
  * option for no differential analysis but still do plots (i.e. no heatmaps)
  * Write dew.pl description
- * Redo test times
  * Incorporate new features on web interface
+ * Cleanup PerlLib
+ * Redo test times
  * Write MS (Bioinformatics Oxford? BMC Bioinformatics embargoed until they increase rejection rate!; not innovative/biomedical for Genome Research)
 
  Version 2
