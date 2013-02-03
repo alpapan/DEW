@@ -386,13 +386,14 @@ if ( !-s $counts_expression_level_matrix
   &starts_alignments($file_for_alignment);
   &perform_stats();
   &sqlite_backup() unless $db_use_file;
-  exit if $gene_graphs_only;
   &process_expression_level();
+  &print_binary_table();
   &sqlite_backup() unless $db_use_file;
   close STATS;
   close STATS_RATIO;
-  &print_binary_table();
 }
+  exit if $gene_graphs_only;
+
 my $check_lines = `wc -l < $counts_expression_level_matrix`;
 die "No expression data available"
   unless ( -s $counts_expression_level_matrix && $check_lines > 1 );
@@ -2690,11 +2691,11 @@ sub process_main_stats($) {
 "Median depth of coverage of $seq_id vs $readset_name didn't pass cutoff or was zero ($hit_median). Skipping\n"
         if $debug;
       print STATS
-"$seq_md5hash\t$readset_name\t$seq_id\t$rpkm\t$hit_mean\t$hit_sd\t$hit_median\t$hit_max\n";
+"$seq_md5hash\t$readset_name\t$seq_id\t$rpkm\t$hit_mean\t$hit_sd\t$hit_median\t$hit_max\t$total_hit_reads\t0\n";
       next;
     }
     $readsets_covered++;
-    my $coverage = sprintf( "%.2f", ( $no_bp_covered / $seq_size ) );
+    my $coverage = sprintf( "%.2f", ( ($seq_size-$no_bp_covered) / $seq_size ) );
     &sqlite_add_main_expression_statistics(
                          $seq_md5hash, $readsets[$i], $hit_mean, $no_bp_covered,
                          $mean_reads,  $hit_median,   $hit_max,  $hit_sd );
@@ -2730,7 +2731,7 @@ sub print_binary_table() {
          $total_hit_reads, $coverage
     ) = split( "\t", $ln );
     next unless $coverage;
-    next if ( $hit_mean == 0 || $hit_median == 0 );
+#    next if ( $hit_mean == 0 || $hit_median == 0 );
     if ( $total_hit_reads >= $binary_min_reads ) {
       if ( $coverage >= $binary_min_coverage ) {
         $binary_table{$seq_md5hash}{$readset_name} = 1;
