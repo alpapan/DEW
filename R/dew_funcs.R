@@ -89,13 +89,8 @@ check_distribution = function (edgeR_obj,baseout='tmp'){
 	);
 	x_for_density_log2_box<-boxplot(x_for_density_log2$value,plot=F)
 	
-	x_for_density_DESeq<-data.frame(
-			group = factor( 
-					rep(colnames( data ) ,each=length(rownames(data)  ))  
-			),
-			value = as.vector(as.matrix(scale_with_DESeq(data)))
-	);
-	x_for_density_DESeq_box<-boxplot(x_for_density_DESeq$value,plot=F)
+#	x_for_density_DESeq<-data.frame(			group = factor( 					rep(colnames( data ) ,each=length(rownames(data)  ))  			),			value = as.vector(as.matrix(scale_with_DESeq(data)))	);
+#	x_for_density_DESeq_box<-boxplot(x_for_density_DESeq$value,plot=F)
 	
 	x_for_density_edgeR<-data.frame(
 			group = factor( 
@@ -133,8 +128,8 @@ check_distribution = function (edgeR_obj,baseout='tmp'){
 	print(ggplot(x_for_density_log2, aes(x=group, y=value, fill=group)) + geom_boxplot() + ggtitle(wrap_text('Log2 data', width = 30))  + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + legend_style )
 	print(ggplot(x_for_density_log2, aes(x=value, fill=group)) + geom_density(alpha=.3) + ggtitle(wrap_text('Log 2data', width = 30)) + legend_style)
 	
-	print(ggplot(x_for_density_DESeq, aes(x=group, y=value, fill=group)) + geom_boxplot() + ggtitle(wrap_text('DESeq transformed data', width = 30))  + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + legend_style )
-	print(ggplot(x_for_density_DESeq, aes(x=value, fill=group)) + geom_density(alpha=.3)  + ggtitle(wrap_text('DESeq transformed data', width = 30)) + legend_style)
+#	print(ggplot(x_for_density_DESeq, aes(x=group, y=value, fill=group)) + geom_boxplot() + ggtitle(wrap_text('DESeq transformed data', width = 30))  + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + legend_style )
+#	print(ggplot(x_for_density_DESeq, aes(x=value, fill=group)) + geom_density(alpha=.3)  + ggtitle(wrap_text('DESeq transformed data', width = 30)) + legend_style)
 	
 	print(ggplot(x_for_density_edgeR, aes(x=group, y=value, fill=group)) + geom_boxplot() + ggtitle(wrap_text('edgeR transformed data', width = 30))  + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + legend_style )
 	print(ggplot(x_for_density_edgeR, aes(x=value, fill=group)) + geom_density(alpha=.3) + ggtitle(wrap_text('edgeR transformed data', width = 30)) + legend_style)
@@ -211,7 +206,6 @@ TMM_normalize = function(targetsFile, minCPM = 2,minLibs = 1,outfile=NULL) {
 	# only use those rows that have a minimum number of tags (min to be DE)
 	edgeR_obj$CPM <- cpm(edgeR_obj,normalized.lib.sizes=F)
 	edgeR_obj<-edgeR_obj[rowSums(edgeR_obj$CPM >= minCPM) >= minLibs,]
-	
 	# reset library sizes
 	edgeR_obj$samples$lib.size = colSums(edgeR_obj$counts)
 	
@@ -521,11 +515,13 @@ edgeR_DE_postanalysis = function (aliases,edgeR_obj, edgeR_obj_de, baseout='tmp'
 
 
 edgeR_gene_plots_all = function(genesaliases_file,baseout='tmp'){
+	require(ggplot2)
 	# variables
 	aliases <- as.matrix(read.table(file=genesaliases_file,sep="\t",header=F,col.names=c('uid','alias')))
 	data <- read.table(file=baseout, header=T, com="", sep="\t",row.names=1)
 	gene_names <- convert_from_uid(aliases,rownames(data))
 	rownames(data)<-gene_names
+	
 	sample_names <- colnames(data)
 	ordered.data <- data[with(data, order(rownames(data))), ]
 	
@@ -533,25 +529,39 @@ edgeR_gene_plots_all = function(genesaliases_file,baseout='tmp'){
 	#clustering.data <- as.matrix(log2(1+ordered.data)) 
 	
 	# gene plots
+	stacked_data <-stack(ordered.data)
+	main_graph <- ggplot(stacked_data, aes(x = ind, y = values))
+	main_graph <- main_graph + coord_flip()
+	main_graph <- main_graph + stat_boxplot(geom ='errorbar',na.rm=T,alpha=0.3)
+	main_graph <- main_graph + geom_boxplot(outlier.size = 1,na.rm=T,color='grey',outlier.colour='grey')
+	main_graph <- main_graph + scale_y_log10(name=quote('log10( TMM-normalized FPKM from eff. counts)'))
+	main_graph <- main_graph + scale_x_discrete(name=quote('Library'))
+	main_graph <- main_graph + theme(axis.title.y = element_text(size=17, colour = rgb(0,0,0)))
+	main_graph <- main_graph + theme(axis.title.x = element_text(size=10, colour=rgb(0,0,0)))
+	main_graph <- main_graph + theme(axis.text.x = element_text(size=12, colour=rgb(0,0,0)))
+	main_graph <- main_graph + theme(axis.text.y = element_text(size=12, colour = rgb(0,0,0),vjust=0.5))
+	main_graph <- main_graph + theme(plot.title = element_text(lineheight=0.8, face=quote(bold)))
+
 	pdf(file=paste(baseout,'.per_gene_plots.pdf',sep=''))
 	if (length(sample_names) < 20){
 		par(mfrow=c(1, 2),oma=c(5,0.1,1,0.1))
 	}else{
 		par(mfrow=c(1, 1),oma=c(5,0.1,1,0.1))
 	}
-	#remember [row,column]
 	for (i in 1:length(ordered.data[,1])) {
-		d <- ordered.data[i,]
-		ymin <- min(d);
-		ymax <- max(d);
-		plot(as.numeric(d), type="l", ylim=c(ymin,ymax), main=gene_names[i] ,
-						col="blue", xaxt="n", xlab="", ylab="TMM-norm. eff. counts")
-		axis(side=1, at=1:length(d), labels=sample_names, las=2,cex.axis=0.5)
+		d<-data.frame(val=as.numeric(ordered.data[i,]),cat=as.factor(colnames(ordered.data[i,])))
+		#ymin <- min(d$cat);
+		#ymax <- max(d$cat);
+		print ( main_graph + ggtitle(row.names(ordered.data[i,])) + geom_point(data=d,aes(x=cat,y=val),colour = "red",size=3) )
+		#normal plot; it's a line plot so counter-intuitive
+		#d <- ordered.data[i,]
+		#plot(as.numeric(d), type="l", ylim=c(ymin,ymax), main=row.names(ordered.data[i,]),col="blue", xaxt="n", xlab="", ylab="TMM-norm. eff. counts")
+		#axis(side=1, at=1:length(d), labels=sample_names, las=2,cex.axis=0.5)
 	}  
 	dev.off()
 }
 
-edgeR_heatmaps_de = function(genesaliases_file,baseout='tmp',kclusters = 10){
+edgeR_differential_expression = function(genesaliases_file,baseout='tmp',kclusters = 10){
 	library(gdata,quietly=T,warn.conflicts=F,verbose=F)
 	library(gplots,quietly=T,warn.conflicts=F,verbose=F)
 	library(cluster,quietly=T,warn.conflicts=F,verbose=F)
@@ -574,23 +584,24 @@ edgeR_heatmaps_de = function(genesaliases_file,baseout='tmp',kclusters = 10){
 	
 	
 	# gene plots
-	pdf(file=paste(baseout,'.per_gene_plots.pdf',sep=''))
-	if (length(sample_names) < 20){
-		par(mfrow=c(1, 2),oma=c(5,0.1,1,0.1))
-	}else{
-		par(mfrow=c(1, 1),oma=c(5,0.1,1,0.1))
-	}
-	#remember [row,column]
-	for (i in 1:length(ordered.data[,1])) {
-		d <- ordered.data[i,]
-		fdr_value <- formatC(fdr.data[i],format='e',digits=2)
-		ymin <- min(d);
-		ymax <- max(d);
-		plot(as.numeric(d), type="l", ylim=c(ymin,ymax), main=paste(gene_names[i],paste('FDR:',fdr_value,sep=' ') ,sep="\n"), col="blue", xaxt="n", xlab="", ylab="TMM-norm. eff. counts")
-		axis(side=1, at=1:length(d), labels=sample_names, las=2,cex.axis=0.5)
-	}  
-	dev.off()
-	rm(d,i,ymin,ymax)
+# temporarely disable
+#	pdf(file=paste(baseout,'.per_gene_plots.pdf',sep=''))
+#	if (length(sample_names) < 20){
+#		par(mfrow=c(1, 2),oma=c(5,0.1,1,0.1))
+#	}else{
+#		par(mfrow=c(1, 1),oma=c(5,0.1,1,0.1))
+#	}
+#	#remember [row,column]
+#	for (i in 1:length(ordered.data[,1])) {
+#		d <- ordered.data[i,]
+#		fdr_value <- formatC(fdr.data[i],format='e',digits=2)
+#		ymin <- min(d);
+#		ymax <- max(d);
+#		plot(as.numeric(d), type="l", ylim=c(ymin,ymax), main=paste(gene_names[i],paste('FDR:',fdr_value,sep=' ') ,sep="\n"), col="blue", xaxt="n", xlab="", ylab="TMM-norm. eff. counts")
+#		axis(side=1, at=1:length(d), labels=sample_names, las=2,cex.axis=0.5)
+#	}  
+#	dev.off()
+#	rm(d,i,ymin,ymax)
 	
 	# transform data
 	clustering.data <- as.matrix(log2(1+ordered.data)) 
