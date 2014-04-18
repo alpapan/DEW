@@ -1,0 +1,8 @@
+= Example graphs for DEW: Gene expression coverage
+
+.Graphs
+* Gene coverage for a gustatory receptor
+** image:images/HarmGR1.graph.png[Gene coverage for a gustatory receptor]
+* Gene coverage for an olfactory receptor
+* image:images/HarmOR11.graph.png[Gene coverage for an olfactory receptor]
+

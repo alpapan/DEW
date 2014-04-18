@@ -1,16 +1,31 @@
 = Differential Expression on the Web =
 
+''The analysis proceeds as such'': gapped alignments are performed and corrected for length, PCR and fragment bias so that a Fragment Per (effective) Kilobase per Million of reads (FPKM) is estimated as well as the simpler Reads Per Kb per Million of reads (RPKM). When provided with multiple isoforms and in the ‘contextual’ mode, corrections include a expectation maximization algorithm estimates effective expression profiles and a corrected alignment is produced. For each gene the user provides, DEW computes coverage descriptive statistics (RPKM, FKMP and total, mean and median corrected counts), expression profiles (normalized as R/FPKM and trimmed mean of fold change). DEW allows users to explore the data by providing interactive graphs that show the (corrected) depth of read coverage across each gene (as a line graph), fold change versus absolute abundance (as 2D and 3D scatter plots with data points coloured by (2D) or with the third axis being (3D) the False Discovery Score for each test) and relative expression. 
+
+== Pipeline
+
+The DEW pipeline is a one command line solution that aligns reads, corrects expression biases (eXpress), TMM normalizes (edgeR) and produces FPKM values that are then visualized with pretty ggplot graphics.
+
+.Example graphs
+* link:gene_coverage.html[Coverage across the gene]
+* link:library_expression.html[Expression comparison between libraries]
+* link:example/index.html[HTML5 powered graphs for browsers]
+
+== Graphical User Interface
+
+The Graphical User Interface was initially built using Drupal and does not currently support all the new pretty R graphs (just the gene coverage). It requires some work to integrate it (if anyone wants to help...) but it is currently a low priority as I'm focused on integration with JBrowse / WebApollo.
+
 'DEW' is a platform that allows users to explore RNA-Seq data using a Graphical User Interface. Users select two or more RNA-Seq readsets and provide a dataset of genes to be used for ascertaining their expression profiles.
 
 ''Administrators'' can rapidly setup the server using the http://drupal.org[Drupal Content Management System] and can specify which RNA-Seq readsets (either Single- or Paired-end) are used by providing the program with the files (as .bam or fastq.bz2) and a user-friendly name.
 
 ''End-users'' can then provide their own list of genes and perform two types of analyses: ‘survey’ and ‘contextual’. In the survey mode, each gene is investigated independently against all reads and the results are stored in a database. If a gene has already been checked against the same readsets (this is validated using a unique checksum signature derived from the actual sequence rather than any user-provided gene names), the database is used to rapidly retrieve alignment statistics so that users need not to wait for alignments to be completed. In the contextual mode, alignments of reads are considered in relation to all of the genes that have been provided and certain corrections are made to account for isoforms and close paralogues. Further, DEW checks if significant differential expression is present in some parts of a gene even if overall expression is not significantly different.
 
-''The analysis proceeds as such'': gapped alignments are performed and corrected for length, PCR and fragment bias so that a Fragment Per (effective) Kilobase per Million of reads (FPKM) is estimated as well as the simpler Reads Per Kb per Million of reads (RPKM). When provided with multiple isoforms and in the ‘contextual’ mode, corrections include a expectation maximization algorithm estimates effective expression profiles and a corrected alignment is produced. For each gene the user provides, DEW computes coverage descriptive statistics (RPKM, FKMP and total, mean and median corrected counts), expression profiles (normalized as R/FPKM and trimmed mean of fold change). DEW allows users to explore the data by providing interactive graphs that show the (corrected) depth of read coverage across each gene (as a line graph), fold change versus absolute abundance (as 2D and 3D scatter plots with data points coloured by (2D) or with the third axis being (3D) the False Discovery Score for each test) and relative expression. 
-
 The results are presented as an interactive report that allows domain-experts to explore and interface with the results. Except the interactive graphs, the report includes: a list of genes that are housekeeping (i.e. very little fold change) or significantly differentially expressed between i) each pair of readsets or ii) across all readsets.
 
-== TODO ==
-- Make a http://insectacentral.org/bench/dew[demo available]. 
-- Support replicates
-- Allow filtering by FDR and FC
+== Obtaining DEW
+
+Freely distributed from https://sourceforge.net/projects/jamps/files/RC/[here]. Please subscribe to the https://lists.sourceforge.net/lists/listinfo/jamps-users[user mailing list].
+
+It's not published. We really appreciate any comments and feedback you can provide, so please do no matter how minor you think they are (e.g. typos in this document).
+
