@@ -1,0 +1,83 @@
+= User instructions =
+
+== Installation ==
+
+You need some libraries installed. Simply see/run dew.install.sh
+
+[source,bash]
+bash dew.install.sh
+
+== Web interface ==
+
+Sadly the Drupal web-interface does not include any of the new and advanced functionality yet. Please use the command line interface for the time being.
+
+== Command line ==
+
+.To use the software you need three things
+* A FASTA file of the genes you want to query.
+* FASTQ or FASTQ.bz2 files for each one of your libraries
+* optionally, a tab delimited file that described your libraries (-library_name_file)
+
+Because we will do a TMM normalization, the FASTA file should contain 'all' of your assembled genes. In the future we may implement a two tier system but for the time being TMM normalization will not work with a handfull of genes. You can still of course run it with a couple of genes but nothing in the edgeR directory will be accurate (and the TMM FPKMs will be wrong). In that case please use the pre-TMM output.
+
+The libraries (a.k.a. readsets) should be one (single-ended) or two (paired-end) files per RNASeq library. Provide them with '-1read' and '-2read' (in same/synchronised order)
+
+The -library_name_file file is optional but very useful as it adds metadata to the JavaScript graphs. It is also used by edgeR to identify replicates within a group. It has two required columns whose names must be included in the first line: the first has to be 'file' and the second has to be 'name'. The 'file' is the filename of what is provided as the -1read, 'name' is just a friendly name for the graphs. You can provide any other column. The column 'group' is optional if you have replicates (replicates are not fully supported yet).
+
+[source,bash]
+file	name	sex	tissue	dev.stage	code	group
+HaGR32_1.fastq.trimmomatic.bz2	Mixed-feeding_5th_instar-antennae	mixed	antennae	5th instar	HaGR32	Mixed_feeding_5th_instar_antennae
+
+
+
+You can use perldoc to see the description of the 'dew.pl' file.
+
+[source,bash]
+perldoc dew.pl
+Usage:
+    option legend (:s => string; :i => integer; :f => float; {1,} => one or
+    more); shortened names are valid if they are unique (i.e. -1 instead of
+    -1read)
+
+                -infile :s              => Reference file of genes
+                -sequence :s            => Instead of a file, provide a single sequence (in FASTA format with \n as line separator);
+                -format :s              => The reads can be in BAM or FASTQ format. FASTQ can be .bz2 if bowtie2 is used
+                -1read|readset1|r :s{1,}=> Sets of files (one per library). Tested with Phred33 FASTQ format
+                -2read|readset2: s{1,}  => If provided, do paired end alignment. Sets of paired right files (synced to readset1). Optional.
+
+                -samtools_exec :s       => Executable to samtools if not in your path
+                -bwa_exec :s            => Executable to BWA if not in your path
+                -bowtie2_exec :s        => Executable to Bowtie2 if not in your path
+                -bamtools_exec :s       => Executable to bamtools if not in your path
+                -kangade_exec :s        => Executable to kangade if not in your path
+
+                -uid :s                 => A uid for naming output files. Optional, otherwise generate
+                -threads :i             => Number of CPUs to use for alignment. BWA has no advantage over 4 threads
+                -library_name_file :s   => An tag value tab delimited file (filename/alias) for giving a friendly alias for each readset library. Needs a header line to describe columns. Only include -1read files.
+                -median_cutoff :i       => Median number of hits across reference must be above cutoff
+                -need_all_readsets      => All sets of reads must have alignments against the gene in order for it to be processed. Otherwise, 1+ is sufficient. 
+                -over                   => Allow overwriting of any files with the same name
+                -nographs               => Do not produce any graphs. Graphs can take a very long time when there are many readsets (e.g. 30+ libraries and 30k+ genes).
+                -gene_graphs_only       => The opposite of above; only do enough work to get the gene depth/coverage graphs and then exit
+                -contextual             => Complete realignment of all genes in order to run a correction of biases properly. Does not read/store data in the cache
+                -use_bwa                => Use BWA instead of Bowtie2
+                -isoforms               => Use eXpress to correct Illumina sequencing biases and transcript isofrm assignments. Increases runtime. Use -contextual for accuracy 
+                -prepare_only           => Quit after post-processing readsets and writing initial DB
+                -seeddb :s              => Initialize database using this database file (e.g. after -prepare_only)
+                -kanga                  => Use kanga instead of bowtie2 for alignments
+                -existing_aln :s{1,}    => Use an existing bam file instead of doing a new alignment (must be read name sorted)
+                -resume                 => Load existing data from database and do not reprocess existing readsets (good for adding new readsets even with contextual. NB assumes same FASTA input so DO NOT use if you changed the FASTA reference gene file)
+                -no_kangade|nokangade   => Do not use kangade to process pairwise libraries
+                -db_use_file            => Use file for SQL database rather than system memory (much slower but possible to analyze larger datasets)
+                -dispersion             => For edgeR: if we have replicates, dispersion can be set to auto. otherwise set it to a float such as 0.1 (def)
+                -fdr_cutof              => Cut off FDR for DE as float (0.001 def.)
+                -cpm_cutoff             => Cut off counts-per-million for parsing alignments to edgeR (def 2)
+                -library_cutoff         => Number of libraries that need to have cpm_cutoff to keep alignment (def 1)
+                -binary_min_coverage :f => Minimum gene (length) coverage (0.00 ~ 1.00) for counting a gene as a expressed or not (def. 0.3)
+                -binary_min_reads :i    => Minimum number of aligned reads for counting a gene as a expressed or not (def. 4)
+                -never_skip             => Always process graph for gene/readset pair, regardless of cutoffs
+                -sort_memory_gb :i      => Max gigabytes of memory to use for sorting (def 18). Make sure this is less than the available/requested RAM
+
+
+
+
