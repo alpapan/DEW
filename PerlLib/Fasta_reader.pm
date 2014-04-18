@@ -135,6 +135,7 @@ sub get_FASTA_format {
     my $header = $self->get_header();
     my $sequence = $self->get_sequence();
     $sequence =~ s/(\S{60})/$1\n/g;
+    chomp $sequence;
     my $fasta_entry = ">$header\n$sequence\n";
     return ($fasta_entry);
 }

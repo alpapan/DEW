@@ -45,7 +45,7 @@ sub _advance {
 	my $fh = $self->{_fh};
 
 	my $next_line = <$fh>;
-	while (defined ($next_line) && $next_line =~ /^\@/) {  ## skip over sam headers
+	while (defined ($next_line) && ($next_line =~ /^\@/ || $next_line !~ /\w/)) {  ## skip over sam headers
 		$next_line = <$fh>;
 	}
 	
