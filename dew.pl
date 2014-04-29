@@ -166,7 +166,7 @@ NB: I highly recommend you use either the latest version of Bowtie (2.1.0+) or K
   $VAR1 = bless( {}, 'DBI::st' );
   Cannot find data for Msex2.02821.2
 
- You are trying to reuse an existing directory but not using an existing SQLite database. This error happens because the file *.md5 *.checked exists in your result directory. Please delete them and restart (rm -f outdir/*md5 outdir/*checked)
+ You are trying to reuse an existing directory but not using an existing SQLite database. This error happens because the file *.md5 *.checked and *.depth.completed exists in your result directory. Please delete them and restart (rm -f outdir/*md5 outdir/*checked). Do not set -resume
 
 2. eXpress is taking forever (> 12h)
   
@@ -376,8 +376,7 @@ if ($extra_options) {
   $extra_express .= '--' . $opt2[1] if $opt2[0] eq 'express';
  }
 }
-
-$uid    = md5_hex( time() . 'dew' )         unless $uid;
+$uid    = &get_uid_time('dew' )         unless $uid;
 $dbname = $uid . '_transcriptome.sqlite.db' unless $dbname;
 my $cwd = getcwd;
 my $result_dir =
@@ -439,8 +438,14 @@ if ( !-s $counts_expression_level_matrix
  &sqlite_backup() unless $db_use_file;
  close STATS;
  close STATS_RATIO;
+}else{
+	print "Expression data already exists ($counts_expression_level_matrix). Will not reprocess.\n";
 }
-exit if $gene_graphs_only;
+
+if ($gene_graphs_only){
+	print "User stop requested after gene coverage graphs were completed.\n";
+	exit(0);
+}
 
 my $check_lines = `wc -l < $counts_expression_level_matrix`;
 die "No expression data available"
@@ -452,6 +457,7 @@ $check_lines = `wc -l < $fpkm_expression_level_matrix_TMM `
 die "No differential expression found"
   unless ( -s $fpkm_expression_level_matrix_TMM && $check_lines > 1 );
 &perform_edgeR_pairwise();
+print "\nPreparing edgeR graphs, this may take a long time (6-12 hours for a whole genome)\n";
 &prepare_edgeR_graphs();
 my ( $html2d, $html3d ) =
   &prepare_scatter_for_canvas($fpkm_expression_level_matrix_TMM);
@@ -544,6 +550,8 @@ sub sqlite_init() {
   $dbh->do("PRAGMA synchronous = OFF") if $db_use_file;
  }
  else {
+  print "Warning! Database does not seem to be ok, will recreate and not resume.\n";
+  undef($resume);
   print "\tCreating database...\n";
   $dbh->do("PRAGMA encoding = 'UTF-8'");
 
@@ -1344,8 +1352,9 @@ sub prepare_input_data() {
   $file_to_align = &remove_redundant_sequences($file_to_align);
  }
  $md5_aliases_file = $file_to_align . '.md5';
- if ( -s "$file_to_align.checked" && -s $db_file ) {
-  open( IN, "$file_to_align.md5" );
+ if ( -s "$file_to_align.checked" && -s $md5_aliases_file && $resume) {
+  print "Parsing existing checksums using $md5_aliases_file\n";
+  open( IN, $md5_aliases_file );
   while ( my $ln = <IN> ) {
    chomp($ln);
    my @data = split( "\t", $ln );
@@ -1356,20 +1365,13 @@ sub prepare_input_data() {
    next if $no_checks;
    $do_backup = 1;
 
-   for ( my $i = 0 ; $i < ( scalar(@readsets) ) ; $i++ ) {
-    &sqlite_init_expression_statistics( $seq_md5hash, $readsets[$i] );
-    for ( my $k = $i + 1 ; $k < scalar(@readsets) ; $k++ ) {
-     next if $readsets[$i] eq $readsets[$k];
-     &sqlite_start_fold_change( $seq_md5hash, $readsets[$i], $readsets[$k] );
-    }
-   }
   }
   close IN;
 
   # we assume we don't need to run the sql commands because they already exist.
  }
  else {
-
+  print "Creating checksums for each sequence\n";
   # first time or every time .checked file is deleted.
   $do_backup = 1;
   open( MD5SUMS, ">$file_to_align.md5" );
@@ -1395,13 +1397,6 @@ sub prepare_input_data() {
      if $user_alias{$seq_md5hash};
    $user_alias{$seq_md5hash} = $id;
 
-   for ( my $i = 0 ; $i < ( scalar(@readsets) ) ; $i++ ) {
-    &sqlite_init_expression_statistics( $seq_md5hash, $readsets[$i] );
-    for ( my $k = $i + 1 ; $k < scalar(@readsets) ; $k++ ) {
-     next if $readsets[$i] eq $readsets[$k];
-     &sqlite_start_fold_change( $seq_md5hash, $readsets[$i], $readsets[$k] );
-    }
-   }
   }
   close MD5SUMS;
   close BED;
@@ -1410,8 +1405,16 @@ sub prepare_input_data() {
   close CHECK;
  }
 
- print &mytime . "Preparing readsets\n";
+ print &mytime . "Preparing readsets and database tables\n";
  for ( my $i = 0 ; $i < @readsets ; $i++ ) {
+  foreach my $seq_md5hash (keys %user_alias){
+    &sqlite_init_expression_statistics( $seq_md5hash, $readsets[$i] );
+    for ( my $k = $i + 1 ; $k < scalar(@readsets) ; $k++ ) {
+     next if $readsets[$i] eq $readsets[$k];
+     &sqlite_start_fold_change( $seq_md5hash, $readsets[$i], $readsets[$k] );
+    }
+  }
+
   if ( $readsets2[$i] ) {
    my ( $readset_name, $library_size, $do_backup ) =
      &perform_readset_metadata( $readsets[$i], $readsets2[$i] );
@@ -1535,12 +1538,15 @@ sub starts_alignments() {
     foreach my $id (@reference_sequence_list) {
      next if $aligned_ids_hashref->{$id};
      my $seq_md5hash = &sqlite_get_md5($id);
-     unless ( ( $resume || $debug )
-              && &sqlite_get_depth_data( $seq_md5hash, $readset ) )
-     {
-      &sqlite_add_depth_data( $seq_md5hash, $readset, \%hash );
-      $do_backup++;
-     }
+
+   if (&sqlite_get_depth_data( $seq_md5hash, $readset )){
+    &sqlite_add_depth_data( $seq_md5hash, $readset, \%hash ) if !$resume && !$debug;
+    $do_backup++ if !$resume && !$debug;
+   }else{
+    &sqlite_add_depth_data( $seq_md5hash, $readset, \%hash );
+    $do_backup++;
+   }
+
     }
    }
    &sqlite_backup() if !$db_use_file && $do_backup;
@@ -1593,6 +1599,7 @@ sub starts_alignments() {
      foreach my $id (@reference_sequence_list) {
       next if $aligned_ids_hashref->{$id};
       my $seq_md5hash = &sqlite_get_md5($id);
+      # not contextual
       unless ( &sqlite_get_depth_data( $seq_md5hash, $readsets[$i] ) ) {
        &sqlite_add_depth_data( $seq_md5hash, $readsets[$i], \%hash );
       }
@@ -1741,13 +1748,13 @@ sub process_depth_of_coverage($$$) {
  my $file_to_align = shift;
  my $readset       = shift;
  my $bam           = shift;
- return if ( -s $bam . ".depth.completed" );
+ return if ( -s $bam . ".depth.completed" && $resume);
  my $readset_metadata = &sqlite_get_readset_metadata($readset);
  my $readset_name     = $readset_metadata->{'alias'};
  print LOG &mytime
-   . "Processing $readset_name depth file $bam from $file_to_align\n";
+   . "Processing $readset_name depth from $bam\n";
  print &mytime
-   . "Processing $readset_name depth file $bam from $file_to_align\n";
+   . "Processing $readset_name depth from $bam\n";
  my $tmp_depth_file = $bam . ".depth";
  &process_cmd("$samtools_exec depth $bam > $tmp_depth_file 2>/dev/null")
    unless -s $tmp_depth_file;
@@ -1769,7 +1776,7 @@ sub process_depth_of_coverage($$$) {
  while ( my $ln = <DEPTH> ) {
   $timer_counter += length($ln);
   print $timer->report( "eta: %E min, %40b %p\r", $timer_counter )
-    if ( $timer_counter % 10000 == 0 );
+    if ( $timer_counter % 100000 == 0 );
   chomp($ln);
   my @data = split( "\t", $ln );
   if ( $previous_id && $previous_id ne $data[0] ) {
@@ -1777,11 +1784,10 @@ sub process_depth_of_coverage($$$) {
    $aligned_ids{$previous_id} = 1;
    $previous_id = $data[0];
 
-   # do not add if they already exist (unless it is a contextual alignment
-   # without debug, in which case overwrite
-   unless ( ( !$contextual_alignment || $debug || $resume )
-            && &sqlite_get_depth_data( $seq_md5hash, $readset ) )
-   {
+   # do not add if they already exist (unless it is a contextual alignment without debug, in which case overwrite)
+   if (&sqlite_get_depth_data( $seq_md5hash, $readset )){
+    &sqlite_add_depth_data( $seq_md5hash, $readset, \%hash ) if ( ($contextual_alignment && !$debug) || !$resume);
+   }else{
     &sqlite_add_depth_data( $seq_md5hash, $readset, \%hash );
    }
    %hash = ();
@@ -1793,9 +1799,9 @@ sub process_depth_of_coverage($$$) {
  # process last ID
  my $seq_md5hash = &sqlite_get_md5($previous_id);
  $aligned_ids{$previous_id} = 1;
- unless ( ( !$contextual_alignment || $debug || $resume )
-          && &sqlite_get_depth_data( $seq_md5hash, $readset ) )
- {
+ if (&sqlite_get_depth_data( $seq_md5hash, $readset )){
+  &sqlite_add_depth_data( $seq_md5hash, $readset, \%hash ) if ( ($contextual_alignment && !$debug) || !$resume);
+ }else{
   &sqlite_add_depth_data( $seq_md5hash, $readset, \%hash );
  }
  close DEPTH;
@@ -2592,7 +2598,7 @@ sub perform_correct_bias($$$) {
 
 sub perform_stats() {
  if ( !$no_graphs ) {
-  print "\n"
+  print "\n" 
     . &mytime()
     . "Stats n graphs: Calculating per gene stats and creating images in $result_dir/graphs \n";
   print LOG &mytime()
@@ -2612,8 +2618,7 @@ sub perform_stats() {
  print STATS_RATIO "\tExpress-corrected FPKM\tExpress-corrected counts"
    if $perform_bias_correction;
  print STATS_RATIO "\n";
- print STATS
-"Checksum\tReadset\tGene alias\tRPKM\tMean\tstd. dev\tMedian\tUpper limit\tTotal hits\tGene coverage\n";
+ print STATS "Checksum\tReadset\tGene alias\tRPKM\tMean\tstd. dev\tMedian\tUpper limit\tTotal hits\tGene coverage\n";
 
  foreach my $id (@reference_sequence_list) {
   &process_main_stats($id);
@@ -3298,7 +3303,7 @@ edgeR_differential_expression('$md5_aliases_file','$diff_expr_matrix',$tree_clus
  &process_cmd(
 "R --no-restore --no-save --slave -f $R_script > $R_script.log 2>$R_script.err"
  ) if !-s "$R_script.log" || -s "$R_script.err" > 50;
-
+ &get_figure_legend_FPKM_per_gene_plots("$norm_matrix_file.per_gene_plots.pdf");
  # we now have the heatmaps and cluster data. Produce JSON objects for web
  # NEWICK data
  my $hcgenes   = $diff_expr_matrix . '.hcgenes.newick';
@@ -4109,4 +4114,23 @@ sub remove_redundant_sequences() {
  close OUT;
  print "Excluded $count identically redundant sequences from $file\n";
  return "$file.noredundant.fsa";
+}
+
+sub get_uid_time(){
+	my $string = shift;
+	$string = 'unique' if !$string;
+	return md5_hex( time() . $string);
+}
+
+
+sub get_figure_legend_FPKM_per_gene_plots(){
+	my $file = shift;
+	$file=~s/.pdf$/_legend.txt/;
+
+	my $legend = 'Differential expression as estimated by DEW. For each gene in the assembly an expression value was derived after normalizing effective counts (from eXpress) for library size and the Trimmed Mean of M-values (TMM) and converting it to a FPKM value. The boxplots in the background of each gene plot show the distribution of expression values for each library: The 1st & 3rd quartile and median of these expression value for the entire library. The bars of each boxplot (whiskers) extend up to 1.5 the length of the box (up to the max/min outlier point) while the grey points denote outliers. Then for each gene, a red dot denotes the actual expression value for each library. If the red dot intercepts the Y axis (i.e. near 0), then the gene deemed as not expressed.';
+
+	open (OUT,">$file");
+	print OUT &wrap_text($legend);
+	close OUT;
+
 }
