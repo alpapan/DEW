@@ -1226,12 +1226,13 @@ sub prepare_library_alias() {
     next;
    }
    elsif ( !$data[1] ) {
-    warn "Lib alias entry "
-      . $data[0]
-      . " has no name entry. Will use basename of filename\n";
+    warn "Lib alias entry "      . $data[0]      . " has no name entry. Will use basename of filename\n";
     $data[1] = fileparse( $data[0] );
    }
+
    $data[1] =~ s/\W+/_/g;
+
+   die "Library name (".$data[1].") cannot start with a digit (an R issue)\n" if $data[1] =~/^\d+/;
    $library_aliases{ $data[0] } = $data[1];
    if ( $data[2] ) {
     for ( my $i = 2 ; $i < @data ; $i++ ) {
@@ -1242,10 +1243,10 @@ sub prepare_library_alias() {
    if ( !$library_metadata{ $data[1] }{'group'} ) {
     $library_metadata_headers{'group'}++;
     $library_metadata{ $data[1] }{'group'} = $data[1];
-    $print .= $ln . "\t" . $data[1] . "\n";
+    $print .= join(@data,"\t") . "\t" . $data[1] . "\n";
    }
    else {
-    $print .= $ln . "\n";
+    $print .= join(@data,"\t") . "\n";
    }
    die "Readset "
      . $data[1]
@@ -1254,10 +1255,7 @@ sub prepare_library_alias() {
      if $groups_readsets{ $library_metadata{ $data[1] }{'group'} }{ $data[1] };
 
    # for edgeR counts
-   my $computer_friendly_name = $data[1];
-   $computer_friendly_name =~ s/\W/_/g;
-   $groups_readsets{ $library_metadata{ $data[1] }{'group'} }{ $data[1] } =
-     $edgeR_dir . $computer_friendly_name . '.dat';
+   $groups_readsets{ $library_metadata{ $data[1] }{'group'} }{ $data[1] } = $edgeR_dir . $data[1] . '.dat';
   }
   close IN;
  }
