@@ -1075,8 +1075,8 @@ sub perform_checks_preliminary() {
  print &mytime . "Performing preliminary checks\n";
 
  pod2usage "SQLite 3 not found\n" unless $sqlite3_exec;
- pod2usage "BWA not found\n"
-   unless $bwa_exec && -s $bwa_exec && -x $bwa_exec;
+ pod2usage  "BWA not found\n"
+   if $use_bwa && (!$bwa_exec || !-s $bwa_exec || !-x $bwa_exec);
  pod2usage "Samtools not found\n"
    unless $samtools_exec && -s $samtools_exec && -x $samtools_exec;
  $read_format = lc($read_format);
@@ -4055,7 +4055,7 @@ sub check_program() {
  my @paths;
  foreach my $prog (@_) {
   my $path = `which $prog`;
-  die "Error, path to required $prog cannot be found" unless $path =~ /^\//;
+  die "Error, path to required $prog cannot be found\n" unless $path =~ /^\//;
   chomp($path);
   $path = readlink($path) if -l $path;
   push( @paths, $path );
@@ -4067,7 +4067,7 @@ sub check_program_optional() {
  my @paths;
  foreach my $prog (@_) {
   my $path = `which $prog`;
-  warn "Warning: path to optional $prog cannot be found" unless $path =~ /^\//;
+  warn "Warning: path to optional $prog cannot be found\n" unless $path =~ /^\//;
   chomp($path);
   $path = readlink($path) if -l $path;
   push( @paths, $path );
