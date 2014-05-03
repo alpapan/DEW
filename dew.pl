@@ -240,7 +240,7 @@ $| = 1;
 #debug
 #use Data::Dumper;
 my $debug = 0;
-$ENV{'PATH'} = $ENV{'PATH'} . ":$RealBin:$RealBin/3rd_party:$RealBin/util";
+$ENV{'PATH'} = "$RealBin:$RealBin/3rd_party/bin/:$RealBin/util:".$ENV{'PATH'};
 #################################
 my (
      $input_reference_file,  @readsets,
@@ -358,7 +358,7 @@ GetOptions(
 die
   "-binary_min_coverage has to be between 0 and 1 (not $binary_min_coverage)\n"
   unless $binary_min_coverage > 0 && $binary_min_coverage <= 1;
-
+$threads = 2 if $threads < 2; # no idea what happens with a single thread
 my ($bunzip2_exec) = &check_program_optional('pbzip2');
 my $bunzip_threads = $threads <= 6 ? $threads : 6;
 $bunzip2_exec .= " -p$bunzip_threads " if $bunzip2_exec;
@@ -1642,9 +1642,9 @@ sub prepare_alignment_from_existing() {
    . " as $alignment_bam_file.namesorted\n"
    unless -s "$alignment_bam_file.namesorted";
 
-#         &process_cmd("samtools view -h -o $alignment_sam_file.namesorted ".$use_existing_bam[$i]) unless -s "$alignment_sam_file.namesorted";
+#         &process_cmd("$samtools_exec view -h -o $alignment_sam_file.namesorted ".$use_existing_bam[$i]) unless -s "$alignment_sam_file.namesorted";
  &process_cmd(
-        "samtools sort -m $sort_memory " . $use_existing_bam[$i] . " $alnbase" )
+        "$samtools_exec sort -@ $threads -m $sort_memory " . $use_existing_bam[$i] . " $alnbase" )
    unless -s $alignment_bam_file;
  &perform_correct_bias( $alignment_bam_file, $file_to_align, $readset,
                         $alignment_bam_file . '.namesorted' )
@@ -1733,7 +1733,7 @@ sub perform_alignments() {
   }
   die "Could not produce SAM file for $readset\n" unless -s $sam;
   &process_cmd(
-"$samtools_exec view -S  -u $sam 2>/dev/null|samtools sort -m $sort_memory - $baseout"
+"$samtools_exec view -S  -u $sam 2>/dev/null|$samtools_exec sort -@ $threads -m $sort_memory - $baseout"
   ) unless -s $bam;
  }
  die "Could not convert to BAM file for $readset\n" unless -s $bam;
@@ -1896,7 +1896,7 @@ sub perform_kangade() {
      {
       $alignment_sam_file_C =
         $alignment_bamfiles_hashref->{$readset_C} . '.sam';
-      &process_cmd( "samtools view -h -o $alignment_sam_file_C "
+      &process_cmd( "$samtools_exec view -h -o $alignment_sam_file_C "
                     . $alignment_bamfiles_hashref->{$readset_C} )
         unless -s $alignment_sam_file_C;
       $files_to_delete{$alignment_sam_file_C} = 1;
@@ -1913,7 +1913,7 @@ sub perform_kangade() {
      {
       $alignment_sam_file_E =
         $alignment_bamfiles_hashref->{$readset_E} . '.sam';
-      &process_cmd( "samtools view -h -o $alignment_sam_file_E "
+      &process_cmd( "$samtools_exec view -h -o $alignment_sam_file_E "
                     . $alignment_bamfiles_hashref->{$readset_E} )
         unless -s $alignment_sam_file_E;
       $files_to_delete{$alignment_sam_file_E} = 1;
@@ -2077,12 +2077,12 @@ sub perform_readset_metadata($$) {
   &process_cmd("$samtools_exec index $readset")
     unless -s $readset . '.bai';
   die "Readset $readset cannot be indexed" unless -s $readset . '.bai';
-  my $d = `samtools idxstats $readset|grep '^\*'`;
+  my $d = `$samtools_exec idxstats $readset|grep '^\*'`;
   $d =~ /(\d+)$/;
   $library_size = $1;
   if ($readset2) {
    $d = 0;
-   $d = `samtools idxstats $readset2|grep '^\*'`;
+   $d = `$samtools_exec idxstats $readset2|grep '^\*'`;
    $d =~ /(\d+)$/;
    $library_size += $1;
   }
@@ -2208,7 +2208,7 @@ sub align_kanga() {
    );
    unlink("$sam.1");
    unlink("$sam.2");
-   &process_cmd("samtools view -F12 -h -T $file_to_align -S -o $sam $sam.t");
+   &process_cmd("$samtools_exec view -F12 -h -T $file_to_align -S -o $sam $sam.t");
    unlink("$sam.t");
   }
   else {
@@ -2286,12 +2286,12 @@ sub process_alignments($) {
    unless -s $alignment_bam . '.bai';
  die "File $alignment_bam cannot be indexed"
    unless -s $alignment_bam . '.bai';
- &process_cmd("samtools idxstats $alignment_bam > $alignment_bam.stats")
+ &process_cmd("$samtools_exec idxstats $alignment_bam > $alignment_bam.stats")
    unless -s "$alignment_bam.stats";
  die "File $alignment_bam cannot be indexed"
    unless -s $alignment_bam . '.stats';
  my @sizes              = `grep -v '^\*' $alignment_bam.stats`;
- my $reads_that_aligned = `samtools view -F260 -c $alignment_bam`;
+ my $reads_that_aligned = `$samtools_exec view -F260 -c $alignment_bam`;
  chomp($reads_that_aligned);
  my $readset_metadata = &sqlite_get_readset_metadata($readset);
 
@@ -2351,7 +2351,7 @@ sub perform_correct_bias($$$) {
  my $fasta_file         = shift;
  my $readset            = shift;
  my $namesorted_sam     = shift;
- my $reads_that_aligned = `samtools view -F260 -c $original_bam`;
+ my $reads_that_aligned = `$samtools_exec view -F260 -c $original_bam`;
  chomp($reads_that_aligned);
  if ( !$reads_that_aligned ) {
   die "No reads aligned!";
@@ -2384,7 +2384,7 @@ sub perform_correct_bias($$$) {
   mkdir($express_dir) unless -d $express_dir;
   if ($use_bwa) {
    &process_cmd(
-         "$samtools_exec sort -n -m $sort_memory $original_bam $namesorted_sam")
+         "$samtools_exec sort -@ $threads -n -m $sort_memory $original_bam $namesorted_sam")
      unless -s $namesorted_bam;
    if ($contextual_alignment) {
     &process_cmd(
@@ -2392,7 +2392,7 @@ sub perform_correct_bias($$$) {
     ) unless -s "$express_dir/results.xprs";
     sleep(30);
     &process_cmd(
-"$samtools_exec sort -m $sort_memory $express_dir/hits.1.samp.bam $express_bam_base"
+"$samtools_exec sort -@ $threads -m $sort_memory $express_dir/hits.1.samp.bam $express_bam_base"
     ) unless -s "$express_bam_base.bam";
     rename( "$express_dir/results.xprs", $express_results );
     rename( "$express_dir/varcov.xprs",  $express_results . ".varcov" );
@@ -2481,7 +2481,7 @@ sub perform_correct_bias($$$) {
        unless -s "$express_dir/results.xprs";
      sleep(30);
      &process_cmd(
-"$samtools_exec view -u $express_dir/hits.1.samp.bam | samtools sort -m $sort_memory - $express_bam_base"
+"$samtools_exec view -u $express_dir/hits.1.samp.bam | $samtools_exec sort -@ $threads -m $sort_memory - $express_bam_base"
      ) unless -s "$express_bam_base.bam";
     }
     elsif ( -s $namesorted_sam ) {
@@ -2492,7 +2492,7 @@ sub perform_correct_bias($$$) {
        unless -s "$express_dir/results.xprs";
      sleep(30);
      &process_cmd(
-"$samtools_exec view -S -u $express_dir/hits.1.samp.sam | samtools sort -m $sort_memory - $express_bam_base"
+"$samtools_exec view -S -u $express_dir/hits.1.samp.sam | $samtools_exec sort -@ $threads -m $sort_memory - $express_bam_base"
      ) unless -s "$express_bam_base.bam";
     }
     rename( "$express_dir/results.xprs", $express_results );
