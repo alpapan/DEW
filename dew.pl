@@ -152,6 +152,7 @@ test times:
             -sort_memory_gb :i      => Max gigabytes of memory to use for sorting (def 18). Make sure this is less than the available/requested RAM
             -remove_redund          => Remove redundant sequences (identical) in -infile
             -extra_options :s       => Extra options for e.g. express (give as "express:r-stranded;express:max-read-len 250", including the "quotes" )
+	    -genomewide             => Your input provides all the genes of the genome, i.e. expecting to have all reads in the readset aligning. This influences eXpress only. Untested but probably needed for genomewide analyses that have readsets with large amount of non coding sequence (e.g. rDNA). Also stores data in database cache
 
  Express options:
 
@@ -303,7 +304,7 @@ my (
      $use_bwa,           $prepare_input_only, @sample_overlays,
      $initial_db,        $resume,             $gene_graphs_only,
      %binary_table,      $never_skip,         $nobatch_express,
-     $extra_options
+     $extra_options, $genomewide
 );
 GetOptions(
  'nocheck'       => \$no_checks,            #TMP for Debug; should not be needed
@@ -354,6 +355,7 @@ GetOptions(
  'nobatch_express'            => \$nobatch_express,
  'readset_separation:i'       => \$readset_separation,
  'extra_options:s'            => \$extra_options,
+ 'genomewide'                 => \$genomewide
 );
 die
   "-binary_min_coverage has to be between 0 and 1 (not $binary_min_coverage)\n"
@@ -564,7 +566,7 @@ sub sqlite_init() {
   $dbh->do(
           "CREATE INDEX sequence_aliases_idx ON sequence_aliases(seq_md5hash)");
   $dbh->do(
-"CREATE TABLE readsets (readset_id INTEGER PRIMARY KEY,readset_file varchar(255),total_reads integer, is_paired boolean, alias varchar(255), ctime timestamp)"
+"CREATE TABLE readsets (readset_id INTEGER PRIMARY KEY,readset_file varchar(255),total_reads integer, is_paired varchar, alias varchar(255), ctime timestamp)"
   );
   $dbh->do("CREATE UNIQUE INDEX readsets_idx1 ON readsets(readset_file)");
   $dbh->do(
@@ -661,7 +663,7 @@ sub sqlite_init() {
  my $add_seqhash_to_seqdb = $dbh->prepare(
              "INSERT INTO sequence_data (seq_md5hash,seq_length) VALUES (?,?)");
  my $depth_table = 'depth';
- $depth_table .= '_tmp' if $contextual_alignment;
+ $depth_table .= '_tmp' if $contextual_alignment && !$genomewide;
  my $check_depth_data = $dbh->prepare(
 "SELECT data from $depth_table WHERE seq_md5hash=? AND readset_id=(SELECT readset_id from readsets where readset_file=?)"
  );
@@ -675,7 +677,7 @@ sub sqlite_init() {
 "INSERT INTO $depth_table (seq_md5hash,readset_id,data) VALUES (?,(SELECT readset_id from readsets where readset_file=?),?)"
  );
  my $expression_statistics_table = 'expression_statistics';
- $expression_statistics_table .= '_tmp' if $contextual_alignment;
+ $expression_statistics_table .= '_tmp' if $contextual_alignment && !$genomewide;
  my $init_expression_statistics = $dbh->prepare(
 "INSERT INTO $expression_statistics_table (seq_md5hash, readset_id) VALUES (?,(SELECT readset_id from readsets where readset_file=?)) "
  );
@@ -927,7 +929,7 @@ sub sqlite_add_readset_metadata($$$) {
  my $readset_filename = shift;
  my $lib_alias        = shift;
  my $total_reads      = shift;
- my $is_paired        = $paired_readset_lookup{$readset_filename};
+ my $is_paired        = $paired_readset_lookup{$readset_filename} ? $paired_readset_lookup{$readset_filename} : '0';
  my $result           = &sqlite_get_readset_metadata($readset_filename);
  if ( !$result ) {
   $add_readset->execute( $readset_filename, $is_paired, $lib_alias,
@@ -2035,13 +2037,14 @@ sub perform_readset_metadata($$) {
    : fileparse($readset);
  $get_readset->execute($readset);
  my $result = $get_readset->fetchrow_hashref();
+ my $is_paired = $paired_readset_lookup{$readset} ? $paired_readset_lookup{$readset} : '0';
  if ( $result && $result->{'total_reads'} ) {
 
   #update alias if needed
   if ( !$result->{'alias'}
        || ( $result->{'alias'} && $result->{'alias'} ne $readset_name ) )
   {
-   $update_readset->execute( $paired_readset_lookup{$readset},
+   $update_readset->execute( $is_paired,
                              $readset_name, $readset );
    $get_readset->execute($readset);
    $result    = $get_readset->fetchrow_hashref();
@@ -2365,6 +2368,10 @@ sub perform_correct_bias($$$) {
    : 0;
  my $readset_metadata  = &sqlite_get_readset_metadata($readset);
  my $readset_name      = $readset_metadata->{'alias'};
+ # The library size is determined by the total number of reads in the readset
+ # this is due to the need to support searches that are not genome wide
+ # however i've seen pathological genome-wide datasets where only half of the
+ # reads actually map to the genes... what to do then? implement -genomewide flag
  my $readset_size      = $readset_metadata->{'total_reads'};
  my $original_bam_base = fileparse($original_bam);
  my $namesorted_bam =
@@ -2375,10 +2382,19 @@ sub perform_correct_bias($$$) {
  my $express_bam      = $express_bam_base . '.bam';
  my $express_results  = $result_dir . $original_bam_base . ".express.results";
  my $express_dir      = $result_dir . "$readset_name.bias";
- my $current_express_exec = $express_exec . " -m $readset_separation ";
+ # todo get readset distribution from data if genomewide?
+ my $current_express_exec = $express_exec . " --logtostderr --no-update-check -m $readset_separation ";
+ $current_express_exec .= " --library-size $readset_size " if !$genomewide;
  $current_express_exec .= " $extra_express " if $extra_express;
  $current_express_exec .= ' -B 2 ' unless $nobatch_express;
- $current_express_exec .= ' --no-bias-correct ' unless $do_bias_correction;
+ if ($do_bias_correction){
+   if ($readset_size < 20000000){
+           warn "Read set size is less than 20M reads ($readset_size), express will not perform bias correction\n";
+	   $current_express_exec .= ' --no-bias-correct ';
+   }
+ }else{
+   $current_express_exec .= ' --no-bias-correct ';
+ }
 
  unless ( -s $express_results ) {
   mkdir($express_dir) unless -d $express_dir;
@@ -2388,7 +2404,7 @@ sub perform_correct_bias($$$) {
      unless -s $namesorted_bam;
    if ($contextual_alignment) {
     &process_cmd(
-"$current_express_exec --logtostderr --no-update-check --library-size $readset_size -o $express_dir --output-align-samp $fasta_file $namesorted_bam 2> $express_results.log >/dev/null "
+"$current_express_exec  -o $express_dir --output-align-samp $fasta_file $namesorted_bam 2> $express_results.log >/dev/null "
     ) unless -s "$express_dir/results.xprs";
     sleep(30);
     &process_cmd(
@@ -2442,7 +2458,7 @@ sub perform_correct_bias($$$) {
       next;
      }
      &process_cmd(
-"$current_express_exec --library-size $readset_size --no-update-check -o $tmp_sam_file.dir $tmp_fasta_file $tmp_sam_file >/dev/null "
+"$current_express_exec  -o $tmp_sam_file.dir $tmp_fasta_file $tmp_sam_file >/dev/null "
      ) unless -s $tmp_express_file;
      sleep(3);
      if ( -s $tmp_express_file < 200 ) {
@@ -2475,7 +2491,7 @@ sub perform_correct_bias($$$) {
    if ($contextual_alignment) {
     if ( -s $namesorted_bam ) {
      &process_cmd(
-"$current_express_exec --library-size $readset_size --no-update-check -o $express_dir --output-align-samp $fasta_file $namesorted_bam >/dev/null "
+"$current_express_exec  -o $express_dir --output-align-samp $fasta_file $namesorted_bam >/dev/null "
      ) unless -s "$express_dir/results.xprs";
      die "Express failed to produce output\n"
        unless -s "$express_dir/results.xprs";
@@ -2486,7 +2502,7 @@ sub perform_correct_bias($$$) {
     }
     elsif ( -s $namesorted_sam ) {
      &process_cmd(
-"$current_express_exec --library-size $readset_size --no-update-check -o $express_dir --output-align-samp $fasta_file $namesorted_sam >/dev/null "
+"$current_express_exec  -o $express_dir --output-align-samp $fasta_file $namesorted_sam >/dev/null "
      ) unless -s "$express_dir/results.xprs";
      die "Express failed to produce output\n"
        unless -s "$express_dir/results.xprs";
@@ -2543,7 +2559,7 @@ sub perform_correct_bias($$$) {
       next;
      }
      &process_cmd(
-"$current_express_exec --library-size $readset_size --no-update-check -o $tmp_sam_file.dir --output-align-samp $tmp_fasta_file $tmp_sam_file >/dev/null "
+"$current_express_exec  -o $tmp_sam_file.dir --output-align-samp $tmp_fasta_file $tmp_sam_file >/dev/null "
      ) unless -s $tmp_express_file;
      sleep(3);
      if ( !-s $tmp_express_file || -s $tmp_express_file < 200 ) {
@@ -2579,14 +2595,18 @@ sub perform_correct_bias($$$) {
 
    # if debug or small (50mb) bam file, keep it
    if ( $debug || -s $original_bam < 50048576 ) {
+    unlink( $original_bam . '.orig.bai' ) if -s $original_bam.".bai";
     unlink( $original_bam . '.orig' ) if -s $original_bam;
     rename( $original_bam, $original_bam . '.orig' );
+    rename( $original_bam.".bai", $original_bam . '.orig.bai' );
    }
    else {
-    unlink($original_bam) if !$debug;
+    unlink($original_bam);
+    unlink($original_bam.".bai");
    }
    chdir($result_dir);
    link( fileparse($express_bam), fileparse($original_bam) );
+   &process_cmd("$samtools_exec index ".fileparse($original_bam));
    chdir($cwd);
   }
  }
