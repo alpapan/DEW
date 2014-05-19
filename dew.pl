@@ -4,38 +4,12 @@
 
 =head1 TODO
 
-Hammer the point that the input should be the entire assembly if the TMM is to be correct. otherwise don't do TMM!
-
- Important for release
- * BUG: GR processing resulted in truncated binary out file and graphs without depth; deleting the depth data (db/files) fixed that.
-   this was i think a clean run; check and verify there is no bug or fix
- * BUG: Argument "MRF-FB_R1.trim.paired.fastq" isn't numeric in array element at /home/pap056/bin/dew.pl line 1558.
- * parallel runs of express (too complicated?)
- * debug and decide what to do with -nocheck
- * Write dew.pl description
- * Incorporate new features on web interface
- * Redo test times
- * Write MS (Bioinformatics Oxford? BMC Bioinformatics embargoed until they increase rejection rate!; not innovative/biomedical for Genome Research)
+Speed up graph making by using memory (parallelizing doesn't work)
 
  Version 2
  * Network analysis
  * add DESeq and make Venn diagram
- * ReportWizard
- * (this might be good enough for Genome Research if I use some biomedical data but GR is a clique...)
 
-high: for me 
-med:  for bioinformatics alpha tester
-low:  for end-user beta tester
-
-* AP; med; think of a way to speed up gene graphs. Eg. fork it out while kangade is running? For 35libs and 30k genes, we're talking about &make_coverage_graphs taking 1000 min vs 100 min w/o graphs
-* AP; med; think what to report with the housekeeping genes. 
-* AP;low: visualize SNP variation using JBrowse; genes4all?
-* AP: low/time consuming; farm out alignments to another computer or farm (without shared filesystem)
-* AP: low/time consuming; Gets a list of housekeeping genes based on SD. Plots distribution to get 10% most robust ones. User input also allowed.
-      'housekeeping:s{,}'     => A file or a list with IDs from the reference genes that will act as housekeeping (no expression change between readsets)
-* AP;low: add canvas graphs for coverage?
-* Temi;low: Report Wizard
-* AP; low: can use parallel gnu sort but it is only available in newer machines.
 
 =head1 NAME
 
@@ -153,6 +127,9 @@ test times:
             -remove_redund          => Remove redundant sequences (identical) in -infile
             -extra_options :s       => Extra options for e.g. express (give as "express:r-stranded;express:max-read-len 250", including the "quotes" )
 	    -genomewide             => Your input provides all the genes of the genome, i.e. expecting to have all reads in the readset aligning. This influences eXpress only. Untested but probably needed for genomewide analyses that have readsets with large amount of non coding sequence (e.g. rDNA). Also stores data in database cache
+	    -only_alignments        => Stop after all alignments are completed. Good for large data/alignments and HPC environments. Use without -contextual (and use with -nographs and perhaps -debug). 
+	    -cleanup                => Delete alignments after successful completion
+
 
  Express options:
 
@@ -240,7 +217,7 @@ $| = 1;
 
 #debug
 #use Data::Dumper;
-my $debug = 0;
+my $debug;
 $ENV{'PATH'} = "$RealBin:$RealBin/3rd_party/bin/:$RealBin/util:".$ENV{'PATH'};
 #################################
 my (
@@ -251,29 +228,22 @@ my (
      %library_metadata,      $extra_genes,
      %paired_readset_lookup, $perform_bias_correction,
      %fold_changes,          %skipped_references,
-     %user_alias,            %groups_readsets,
-     $md5_aliases_file,      $remove_redund
+     %user_alias,            %groups_readsets, $cleanup,
+     $md5_aliases_file,      $remove_redund, $kangade_exec ,$kangax_exec, $kanga_exec
 );
 
 my $db_hostname = 'localhost';
 my (
      $sqlite3_exec,             $ps2pdf_exec,  $inkscape_exec,
-     $convert_imagemagick_exec, $pdfcrop_exec, $kanga_exec,
-     $kangax_exec,              $kangade_exec, $samtools_exec,
+     $convert_imagemagick_exec, $pdfcrop_exec, $biokanga_exec,
+     $samtools_exec,
      $bowtie2_exec,             $bwa_exec,     $express_exec,
      $bamtools_exec
   )
   = &check_program_optional(
                              'sqlite3',  'gs',       'inkscape', 'convert',
-                             'pdfcrop',  'biokanga', 'biokanga', 'biokanga',
-                             'samtools', 'bowtie2',  'bwa',      'express',
-                             'bedtools'
+                             'pdfcrop',  'biokanga', 'samtools', 'bowtie2',  'bwa',      'express', 'bedtools'
   );
-
-# biokanga:
-$kangade_exec .= ' rnade' if $kangade_exec;
-$kanga_exec   .= ' align' if $kanga_exec;
-$kangax_exec  .= ' index' if $kangax_exec;
 
 if ($ps2pdf_exec) {
  $ps2pdf_exec .=
@@ -282,6 +252,7 @@ if ($ps2pdf_exec) {
 
 # TODO If there exist a sizeable number of housekeeping transcripts that should not be DE, the the dispersion could be estimated from them.
 my $readset_separation     = 250;
+my $bowtie_max_length = 800;
 my $edgeR_dispersion       = 0.4;
 my $minCPM                 = 2;
 my $minLibs                = 1;
@@ -304,8 +275,10 @@ my (
      $use_bwa,           $prepare_input_only, @sample_overlays,
      $initial_db,        $resume,             $gene_graphs_only,
      %binary_table,      $never_skip,         $nobatch_express,
-     $extra_options, $genomewide
+     $extra_options, $genomewide, $only_alignments
 );
+my $given_cmd = $0 . " ".join(" ",@ARGV);
+
 GetOptions(
  'nocheck'       => \$no_checks,            #TMP for Debug; should not be needed
  'infile:s'      => \$input_reference_file,
@@ -319,7 +292,7 @@ GetOptions(
  'bowtie2_exec:s'  => \$bowtie2_exec,
  'bamtools_exec:s' => \$bamtools_exec,       # SE bowtie2 only
  'bwa_exec:s'      => \$bwa_exec,            # modified bwa
- 'kangade_exec:s'  => \$kangade_exec,
+ 'biokanga_exec:s'  => \$biokanga_exec,
 
  'uid:s'                      => \$uid,
  'threads:i'                  => \$threads,
@@ -355,8 +328,11 @@ GetOptions(
  'nobatch_express'            => \$nobatch_express,
  'readset_separation:i'       => \$readset_separation,
  'extra_options:s'            => \$extra_options,
- 'genomewide'                 => \$genomewide
+ 'genomewide'                 => \$genomewide,
+ 'only_alignments'            => \$only_alignments,
+ 'cleanup'                    => \$cleanup
 );
+
 die
   "-binary_min_coverage has to be between 0 and 1 (not $binary_min_coverage)\n"
   unless $binary_min_coverage > 0 && $binary_min_coverage <= 1;
@@ -433,6 +409,10 @@ if ( !-s $counts_expression_level_matrix
      || ( $contextual_alignment && $debug && $debug >= 2 ) )
 {
  &starts_alignments($file_for_alignment);
+ if ($only_alignments){
+	print "User stop requested after alignments are completed.\n";
+	exit(0);
+ }
  &perform_stats();
  &sqlite_backup() unless $db_use_file;
  &process_expression_level();
@@ -444,27 +424,31 @@ if ( !-s $counts_expression_level_matrix
 	print "Expression data already exists ($counts_expression_level_matrix). Will not reprocess.\n";
 }
 
-if ($gene_graphs_only){
+if ($only_alignments){
+	print "User stop requested after alignments are completed.\n";
+	&process_completion();
+}elsif ($gene_graphs_only){
 	print "User stop requested after gene coverage graphs were completed.\n";
-	exit(0);
+	&process_completion();
 }
 
 my $check_lines = `wc -l < $counts_expression_level_matrix`;
-die "No expression data available"
-  unless ( -s $counts_expression_level_matrix && $check_lines > 1 );
-my $fpkm_expression_level_matrix_TMM =
-  &perform_TMM_normalization_edgeR($counts_expression_level_matrix);
-$check_lines = `wc -l < $fpkm_expression_level_matrix_TMM `
-  if $fpkm_expression_level_matrix_TMM;
-die "No differential expression found"
-  unless ( -s $fpkm_expression_level_matrix_TMM && $check_lines > 1 );
+die "No expression data available (empty $counts_expression_level_matrix)!\n" unless ( -s $counts_expression_level_matrix && $check_lines > 1 );
+my $fpkm_expression_level_matrix_TMM = &perform_TMM_normalization_edgeR($counts_expression_level_matrix);
+$check_lines = `wc -l < $fpkm_expression_level_matrix_TMM ` if $fpkm_expression_level_matrix_TMM;
+die "No differential expression found" unless ( -s $fpkm_expression_level_matrix_TMM && $check_lines > 1 );
+
 &perform_edgeR_pairwise();
+
 print "\nPreparing edgeR graphs, this may take a long time (6-12 hours for a whole genome)\n";
 &prepare_edgeR_graphs();
 my ( $html2d, $html3d ) =
   &prepare_scatter_for_canvas($fpkm_expression_level_matrix_TMM);
+
+
 &process_completion();
-exit();
+
+
 #########################################################################################################
 sub process_cmd {
  my ( $cmd, $dir ) = @_;
@@ -952,6 +936,7 @@ sub sqlite_check_expression_statistics($$) {
 
 sub sqlite_init_expression_statistics($) {
  my ( $seq_md5hash, $readset ) = @_;
+ die "No readset ID for initializing sqlite\n" unless $readset;
  unless (
       defined( &sqlite_check_expression_statistics( $seq_md5hash, $readset ) ) )
  {
@@ -991,8 +976,7 @@ sub sqlite_add_express_expression_statistics() {
  if ( !$check || !defined( $check->{'express_fpkm'} ) ) {
 
   #  warn Dumper $check if $debug;
-  die
-"Could not add express expression statistics for: $seq_md5hash,$readset,$fpkm,$eff_counts\n";
+  die"Could not add express expression statistics for: $seq_md5hash,$readset,$fpkm,$eff_counts\n";
  }
 }
 
@@ -1090,6 +1074,18 @@ sub perform_checks_preliminary() {
  pod2usage "Insufficient readsets\n"
    unless @readsets && scalar(@readsets) > 0;
 
+ # biokanga:
+ if ($biokanga_exec && -x $biokanga_exec){
+	$kangade_exec = $biokanga_exec.' rnade';
+	$kangax_exec  = $biokanga_exec.' index' ;
+	$kanga_exec   = $biokanga_exec.' align';
+ }
+ if (scalar(@readsets) < 2 ){
+	print "Only one readset provided. Differential expression will not be run and will exit after the gene graphs are drawn.\n";
+	$gene_graphs_only = 1;
+	$no_kangade = 1;
+ }
+
  if (@readsets2) {
   if ( scalar(@readsets2) < scalar(@readsets) ) {
    warn
@@ -1150,15 +1146,18 @@ sub perform_checks_preliminary() {
 "Result dir $result_dir already exists. If you wish to overwrite give the option -over otherwise delete the directory\n";
  }
  print "Checking for R installations\n";
- system(
-'R --slave --no-restore --no-save -e \'source("~/workspace/dew/R/dew_funcs.R");dew_install();\'  2> R.err'
- );
+ system('R --slave --no-restore --no-save -e \'source("~/workspace/dew/R/dew_funcs.R");dew_install();\'  2> R.err');
  my @error_check = `grep -i 'there is no package called' R.err`;
- die "Some R packages are not installed:\n" . join( "\n", @error_check )
-   if @error_check;
+ if (@error_check){
+	 undef(@error_check);
+	 system('R --slave --no-restore --no-save -e \'source("~/workspace/dew/R/dew_funcs.R");dew_install();\'  2> R.err');
+	 @error_check = `grep -i 'there is no package called' R.err`;
+	 die "Some R packages are not installed:\n" . join( '', @error_check ) if @error_check;
+ }
  unlink("R.err");
  mkdir($result_dir) unless -d $result_dir;
  open( LOG, ">>$result_dir/$uid.log" ) || die($!);
+ print LOG "#Command: ".$given_cmd."\n";
  print LOG "#Started: " . &mytime . "\n";
 
  mkdir($edgeR_dir) unless -d $edgeR_dir;
@@ -1201,8 +1200,7 @@ sub prepare_library_alias() {
   my ($group_exists);
   chomp($header);
   my @headers = split( "\t", $header );
-  die
-"Library alias ($lib_alias_file) must have 'file' and 'name' as the first two columns."
+  die "Library alias ($lib_alias_file) must have 'file' and 'name' as the first two columns."
     . " The other columns are free to be any kind of metadata."
     . " Also the special metadata column 'group' is used for differential expression."
     unless $headers[0] eq 'file' && $headers[1] eq 'name';
@@ -1245,10 +1243,10 @@ sub prepare_library_alias() {
    if ( !$library_metadata{ $data[1] }{'group'} ) {
     $library_metadata_headers{'group'}++;
     $library_metadata{ $data[1] }{'group'} = $data[1];
-    $print .= join(@data,"\t") . "\t" . $data[1] . "\n";
+    $print .= join("\t",@data) . "\t" . $data[1] . "\n";
    }
    else {
-    $print .= join(@data,"\t") . "\n";
+    $print .= join("\t",@data) . "\n";
    }
    die "Readset "
      . $data[1]
@@ -1405,7 +1403,16 @@ sub prepare_input_data() {
   close CHECK;
  }
 
- print &mytime . "Preparing readsets and database tables\n";
+ print &mytime . "Preparing readset metadata tables\n";
+ for ( my $i = 0 ; $i < @readsets ; $i++ ) {
+  if ( $readsets2[$i] ) {
+   my ( $readset_name, $library_size, $do_backup ) =     &perform_readset_metadata( $readsets[$i], $readsets2[$i] );
+  }
+  else {
+   my ( $readset_name, $library_size, $do_backup ) =     &perform_readset_metadata( $readsets[$i] );
+  }
+ }
+ print &mytime . "Preparing database tables\n";
  for ( my $i = 0 ; $i < @readsets ; $i++ ) {
   foreach my $seq_md5hash (keys %user_alias){
     &sqlite_init_expression_statistics( $seq_md5hash, $readsets[$i] );
@@ -1415,14 +1422,6 @@ sub prepare_input_data() {
     }
   }
 
-  if ( $readsets2[$i] ) {
-   my ( $readset_name, $library_size, $do_backup ) =
-     &perform_readset_metadata( $readsets[$i], $readsets2[$i] );
-  }
-  else {
-   my ( $readset_name, $library_size, $do_backup ) =
-     &perform_readset_metadata( $readsets[$i] );
-  }
  }
 
  &sqlite_backup(1) if !$db_use_file && $do_backup;
@@ -1451,9 +1450,7 @@ sub prepare_input_data() {
   unless ( -s "$file_to_align.1.bt2" ) {
    my $build_exec = $bowtie2_exec . '-build';
    print "\t\t\tBuilding reference file for bowtie2...\r";
-   &process_cmd(
-"$build_exec --offrate 1 $file_to_align $file_to_align >/dev/null 2>> $result_dir/$uid.log"
-   );
+   &process_cmd("$build_exec --offrate 1 $file_to_align $file_to_align >/dev/null 2>> $result_dir/$uid.log"  )  unless -s "$file_to_align.rev.1.bt2";
    print " Done!\n";
   }
  }
@@ -1506,7 +1503,8 @@ sub starts_alignments() {
  my ( %alignment_sam_files, %alignment_bam_files, $aligned_ids_hashref, %hash );
  if ($contextual_alignment) {
   for ( my $i = 0 ; $i < (@readsets) ; $i++ ) {
-   print '.' x ( $i + 1 ) . "\r";
+#   print '.' x ( $i + 1 ) . "\r";
+   print "\tProcessing ".($i + 1)." of ".scalar(@readsets)." readsets                \r";
    my $readset          = $readsets[$i];
    my $readset_basename = fileparse($readset);
    my ( $alignment_bam_file, $alignment_sam_file );
@@ -1585,9 +1583,10 @@ sub starts_alignments() {
   link( $file_to_align . '.bed', $new_file_to_align . '.bed' );
   if ( -s $new_file_to_align ) {
    for ( my $i = 0 ; $i < (@readsets) ; $i++ ) {
-    print '.' x ( $i + 1 ) . "\r";
+  #  print '.' x ( $i + 1 ) . "\r";
+    print "\tProcessing ".($i + 1)." out of ".scalar(@readsets)." readsets                \r";
     my ( $alignment_bam_file, $alignment_sam_file ) =
-      &prepare_alignment( $new_file_to_align, $readsets[$i], $readsets2[$i] );
+      &prepare_alignment( $new_file_to_align, $i );
 
     #too slow:
     $aligned_ids_hashref =
@@ -2094,8 +2093,7 @@ sub perform_readset_metadata($$) {
   print LOG "Reads in $readset / $readset2 PE files: $library_size\n"
     if $readset2;
  }
- die "Cannot get library size for $readset"
-   unless $library_size && $library_size > 0;
+ die "Cannot get library size for $readset" unless $library_size && $library_size > 0;
  &sqlite_add_readset_metadata( $readset, $readset_name, $library_size );
  return ( $readset_name, $library_size, $do_backup );
 }
@@ -2105,9 +2103,7 @@ sub align_bowtie2() {
  my $build_exec = $bowtie2_exec . '-build';
  unless ( -s "$file_to_align.1.bt2" ) {
   print "\t\t\tBuilding reference file for bowtie...\r";
-  &process_cmd(
-"$build_exec --offrate 1 $file_to_align $file_to_align >/dev/null 2>> $result_dir/$uid.log"
-  );
+  &process_cmd("$build_exec --offrate 1 $file_to_align $file_to_align >/dev/null 2>> $result_dir/$uid.log"  );
   print " Done!\n";
  }
  my $readgroup = '@RG\tID:' . $readset;
@@ -2117,8 +2113,8 @@ sub align_bowtie2() {
  if ($readset2) {
   if ( $read_format eq 'fastq' ) {
    my $qformat = '--' . &check_fastq_format($readset);
-   &process_cmd(
-"$bowtie2_exec $qformat --end-to-end --sensitive -qap $threads -I 100 -X 800 --no-mixed --no-unal -x $file_to_align -1 $readset -2 $readset2 -S $sam 2> $baseout.log"
+	# NB --all is -a but --all is a bug
+   &process_cmd("$bowtie2_exec $qformat -a --end-to-end --sensitive -q --threads $threads -X $bowtie_max_length --no-mixed --no-unal -x $file_to_align -1 $readset -2 $readset2 -S $sam 2> $baseout.log"
    ) unless -s "$baseout.log";
   }
   else {
@@ -2132,12 +2128,12 @@ sub align_bowtie2() {
   if ( $read_format eq 'fastq' ) {
    my $qformat = '--' . &check_fastq_format($readset);
    &process_cmd(
-"$bowtie2_exec $qformat --end-to-end --sensitive -qap $threads -x $file_to_align -U $readset -S $sam 2> $baseout.log >/dev/null"
+"$bowtie2_exec $qformat -a --end-to-end --sensitive -q --threads $threads -x $file_to_align -U $readset -S $sam 2> $baseout.log >/dev/null"
    ) unless -s "$baseout.log";
   }
   else {
    &process_cmd(
-"$bamtools_exec convert -in $readset -format fastq | $bowtie2_exec --end-to-end --no-unal --sensitive -qap $threads -x $file_to_align -U - -S $sam 2> $baseout.log"
+"$bamtools_exec convert -in $readset -format fastq | $bowtie2_exec -a --end-to-end --no-unal --sensitive -q --threads $threads -x $file_to_align -U - -S $sam 2> $baseout.log"
    ) unless -s "$baseout.log";
   }
  }
@@ -2404,7 +2400,7 @@ sub perform_correct_bias($$$) {
      unless -s $namesorted_bam;
    if ($contextual_alignment) {
     &process_cmd(
-"$current_express_exec  -o $express_dir --output-align-samp $fasta_file $namesorted_bam 2> $express_results.log >/dev/null "
+"$current_express_exec  -o $express_dir --output-align-samp $fasta_file $namesorted_bam >/dev/null 2> $express_results.log"
     ) unless -s "$express_dir/results.xprs";
     sleep(30);
     &process_cmd(
@@ -2414,6 +2410,7 @@ sub perform_correct_bias($$$) {
     rename( "$express_dir/varcov.xprs",  $express_results . ".varcov" );
    }
    else {
+    # not contextual.
     open( EXPR, ">$express_results" ) || die($!);
     print EXPR
 "bundle_id\ttarget_id\tlength\teff_length\ttot_counts\tuniq_counts\test_counts\teff_counts\tambig_distr_alpha\tambig_distr_beta\tfpkm\tfpkm_conf_low\tfpkm_conf_high\tsolvable\n";
@@ -2448,7 +2445,7 @@ sub perform_correct_bias($$$) {
 
      #sort for express
      &process_cmd(
-"$samtools_exec view -F4 -o $tmp_sam_file $original_bam $id  |sort -k1  >>$tmp_sam_file  "
+"$samtools_exec view -F4 -o $tmp_sam_file $original_bam '$id'  |sort -k1  >>$tmp_sam_file  "
      );
      if ( -s $tmp_sam_file < 200 ) {
       warn "No alignments for $id. Skipping\n" if $debug;
@@ -2458,8 +2455,7 @@ sub perform_correct_bias($$$) {
       next;
      }
      &process_cmd(
-"$current_express_exec  -o $tmp_sam_file.dir $tmp_fasta_file $tmp_sam_file >/dev/null "
-     ) unless -s $tmp_express_file;
+"$current_express_exec  -o $tmp_sam_file.dir $tmp_fasta_file $tmp_sam_file >/dev/null  2> $express_results.log" ) unless -s $tmp_express_file;
      sleep(3);
      if ( -s $tmp_express_file < 200 ) {
       warn "No post-express coverage for $id. Skipping\n"
@@ -2490,8 +2486,7 @@ sub perform_correct_bias($$$) {
   else {
    if ($contextual_alignment) {
     if ( -s $namesorted_bam ) {
-     &process_cmd(
-"$current_express_exec  -o $express_dir --output-align-samp $fasta_file $namesorted_bam >/dev/null "
+     &process_cmd("$current_express_exec  -o $express_dir --output-align-samp $fasta_file $namesorted_bam >/dev/null  2> $express_results.log"
      ) unless -s "$express_dir/results.xprs";
      die "Express failed to produce output\n"
        unless -s "$express_dir/results.xprs";
@@ -2502,7 +2497,7 @@ sub perform_correct_bias($$$) {
     }
     elsif ( -s $namesorted_sam ) {
      &process_cmd(
-"$current_express_exec  -o $express_dir --output-align-samp $fasta_file $namesorted_sam >/dev/null "
+"$current_express_exec  -o $express_dir --output-align-samp $fasta_file $namesorted_sam >/dev/null  2> $express_results.log"
      ) unless -s "$express_dir/results.xprs";
      die "Express failed to produce output\n"
        unless -s "$express_dir/results.xprs";
@@ -2550,7 +2545,7 @@ sub perform_correct_bias($$$) {
 
      #sort for express
      &process_cmd(
-       "$samtools_exec view -F4 $original_bam $id |sort -k1  >>$tmp_sam_file ");
+       "$samtools_exec view -F4 $original_bam '$id' |sort -k1  >>$tmp_sam_file ");
      if ( !-s $tmp_sam_file || -s $tmp_sam_file < 200 ) {
       warn "No alignments for $id. Skipping\n" if $debug;
       print LOG "No alignments for $id. Skipping\n";
@@ -2559,7 +2554,7 @@ sub perform_correct_bias($$$) {
       next;
      }
      &process_cmd(
-"$current_express_exec  -o $tmp_sam_file.dir --output-align-samp $tmp_fasta_file $tmp_sam_file >/dev/null "
+"$current_express_exec  -o $tmp_sam_file.dir --output-align-samp $tmp_fasta_file $tmp_sam_file >/dev/null  2> $express_results.log"
      ) unless -s $tmp_express_file;
      sleep(3);
      if ( !-s $tmp_express_file || -s $tmp_express_file < 200 ) {
@@ -3194,14 +3189,14 @@ sub process_completion() {
  close LOG;
  &sqlite_destroy();
  ## cleanup
- unless ($debug) {
+ if ($cleanup) {
   foreach my $readset (@readsets) {
    my $baseout = $result_dir . $uid . '_' . fileparse($readset);
-
-   #unlink("$baseout.bam");
-   #unlink("$baseout.bam.bai");
+   unlink("$baseout.bam");
+   unlink("$baseout.bam.bai");
   }
  }
+ exit(0);
 }
 
 sub perform_TMM_normalization_edgeR() {
@@ -4017,9 +4012,10 @@ sub rename_graph_files_md52gene() {
   my $slice_count = 1;
   my @files       = glob("*png");
   foreach my $file ( sort @files ) {
+   next unless -s $file;
    push( @file_slice, $file );
    $count_files++;
-   if ( $count_files == 500 ) {
+   if ( $count_files == 500 && @file_slice) {
     &process_cmd(   "$convert_imagemagick_exec "
                   . join( " ", @file_slice )
                   . " ../../rnaseq_coverage_genes_$slice_count.pdf" );
@@ -4030,7 +4026,7 @@ sub rename_graph_files_md52gene() {
   }
   &process_cmd(   "$convert_imagemagick_exec "
                 . join( " ", @file_slice )
-                . " ../../rnaseq_coverage_genes_$slice_count.pdf" );
+                . " ../../rnaseq_coverage_genes_$slice_count.pdf" ) if @file_slice;
   chdir($cwd2);
  }
 }
@@ -4078,6 +4074,7 @@ sub check_program() {
   die "Error, path to required $prog cannot be found\n" unless $path =~ /^\//;
   chomp($path);
   $path = readlink($path) if -l $path;
+  chomp($path);
   push( @paths, $path );
  }
  return @paths;
@@ -4090,6 +4087,7 @@ sub check_program_optional() {
   warn "Warning: path to optional $prog cannot be found\n" unless $path =~ /^\//;
   chomp($path);
   $path = readlink($path) if -l $path;
+  chomp($path);
   push( @paths, $path );
  }
  return @paths;
