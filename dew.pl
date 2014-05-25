@@ -514,9 +514,8 @@ sub sqlite_backup() {
  $backup_db_file = $db_use_file ? $db_file . '.backup' : $db_file
    if !$backup_db_file;
  print "\nCheckpointing database ($backup_db_file). DO NOT halt...\r";
-
- # backup file in case it crashes later.
  $dbh->do("VACUUM");
+ $dbh->do("PRAGMA shrink_memory");
 
  # ensure no problems if it crashes while backing up
  $dbh->sqlite_backup_to_file( $backup_db_file . ".tmp" );
