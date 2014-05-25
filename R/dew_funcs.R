@@ -49,7 +49,7 @@ convert_from_uid = function(hash,uids){
 
 scale_with_edgeR = function(edgeR_obj){
 	library(edgeR,quietly=T,warn.conflicts=F,verbose=F)
-	logCPM_edgeR <- predFC(edgeR_obj, prior.count.total=2*ncol(edgeR_obj))
+	logCPM_edgeR <- cpm(edgeR_obj,log=TRUE, prior.count.total=2*ncol(edgeR_obj))
 	return(as.data.frame(logCPM_edgeR))
 }
 
@@ -216,8 +216,8 @@ TMM_normalize = function(targetsFile, minCPM = 2,minLibs = 1,outfile=NULL) {
 	
 	edgeR_obj$samples$eff.lib.size = edgeR_obj$samples$lib.size * edgeR_obj$samples$norm.factors
 	# normalized CPM
-	edgeR_obj$CPM <- cpm(edgeR_obj,normalized.lib.sizes=T)
-	edgeR_obj$logCPM <- log2(1+edgeR_obj$CPM)
+	edgeR_obj$CPM <- cpm(edgeR_obj,log=FALSE,normalized.lib.sizes=T)
+	edgeR_obj$logCPM <- cpm(edgeR_obj,log=TRUE,normalized.lib.sizes=T)
 	
 	if (!is.null(outfile)){
 		unlink(outfile)
@@ -229,7 +229,7 @@ TMM_normalize = function(targetsFile, minCPM = 2,minLibs = 1,outfile=NULL) {
 
 
 # TODO split between those with reps and without reps
-edgeR_DE_explore = function (genesaliases_file,targetsFile, baseout='tmp', dispersion='auto', FDR=0.05,kclusters = 10,minCPM = 2,minLibs = 1){
+edgeR_DE_explore = function (genesaliases_file, targetsFile, baseout='tmp', dispersion='auto', FDR=0.05,kclusters = 10,minCPM = 2,minLibs = 1){
 	#genesaliases_file='/databases/owner/pap056/rna/wei_only_results/wei_only.toalign.md5';targetsFile='/databases/owner/pap056/rna/wei_only_results//edgeR/HaGR01_vs_HaGR16.edgeR_target.files'; baseout='tmp'; dispersion=0.4; FDR=0.05;kclusters = 10;minCPM = 2;minLibs = 1
 	
 	library(Biobase,quietly=T,warn.conflicts=F,verbose=F)
@@ -254,8 +254,9 @@ edgeR_DE_explore = function (genesaliases_file,targetsFile, baseout='tmp', dispe
 			plotBCV(edgeR_obj, main="Dispersion trends")
 			# set dispersion to zero for Poisson-equivalent results.	
 		}
-		if (file_number > 2 ) dev.off()
-		
+		if (file_number > 2 ){
+			dev.off()
+		}
 		cat ("Processing one factor using CML\n");
 		edgeR_obj_de = exactTest(edgeR_obj, dispersion=dispersion)
 		
@@ -395,9 +396,9 @@ edgeR_DE_postanalysis = function (aliases,edgeR_obj, edgeR_obj_de, baseout='tmp'
 	housekeeping<-edgeR_DE_postanalysis_create_housekeeping(aliases,edgeR_obj_de,baseout)
 	
 	
-	topTagCount = sum(edgeR_obj_de$table$QValue < FDR) 
+	topTagCount = sum(edgeR_obj_de$table$QValue <= FDR) 
 	toptgw = topTags(edgeR_obj_de, n = topTagCount);
-	detags_toptgw = toptgw$table[toptgw$table$FDR < FDR,];
+	detags_toptgw = toptgw$table[toptgw$table$FDR <= FDR,];
 	detags_names = rownames(detags_toptgw)
 	#detags_alias <- convert_from_uid(aliases,detags_names) 
 	
@@ -412,7 +413,7 @@ edgeR_DE_postanalysis = function (aliases,edgeR_obj, edgeR_obj_de, baseout='tmp'
 	write.table(edgeR_obj_de$table, quote=F, file=paste(baseout,'.all.txt',sep=''), sep="\t",col.names=NA)
 	write.table(detags_toptgw, quote=F, file=paste(baseout,'.results.txt',sep=''), sep="\t",col.names=NA)
 	cat ("Comparing groups for significant genes...\n")
-	logCPM_edgeR <- predFC(edgeR_obj, prior.count.total=2*ncol(edgeR_obj))
+	logCPM_edgeR <- cpm(edgeR_obj,log=TRUE, prior.count.total=2*ncol(edgeR_obj))
 	ordered.data <-matrix(ncol=length(colnames(logCPM_edgeR)),nrow=length(detags_names))
 	for (i in 1:length(detags_names)){
 		ordered.data[i,] <- logCPM_edgeR[detags_names[i],]
@@ -428,7 +429,7 @@ edgeR_DE_postanalysis = function (aliases,edgeR_obj, edgeR_obj_de, baseout='tmp'
 	for (i in 1:length(ordered.data[,1])) {
 		gene_name <- rownames(ordered.data)[i]
 		if (gene_name %in% detags_names){
-			gene_alias <- aliases[gene_name,]
+			gene_alias <- aliases[which(aliases[,1] == gene_name),2]
 			d <- as.numeric(ordered.data[i,])
 			ymax <- max(d) 
 			#if (is.infinite(min(d))){ymin=0}
@@ -447,7 +448,7 @@ edgeR_DE_postanalysis = function (aliases,edgeR_obj, edgeR_obj_de, baseout='tmp'
 	for (i in 1:length(ordered.data[,1])) {
 		gene_name <- rownames(ordered.data)[i]
 		if (gene_name %in% housekeeping){
-			gene_alias <- aliases[gene_name,]
+			gene_alias <- aliases[which(aliases[,1] == gene_name),2]
 			d <- as.numeric(ordered.data[i,])
 			ymax <- max(d) 
 			#if (is.infinite(min(d))){ymin=0}
@@ -514,11 +515,11 @@ edgeR_DE_postanalysis = function (aliases,edgeR_obj, edgeR_obj_de, baseout='tmp'
 }
 
 
-edgeR_gene_plots_all = function(genesaliases_file,baseout='tmp'){
+edgeR_gene_plots_all = function(genesaliases_file,matrixfile='tmp',outdir='./',do_png=FALSE){
 	require(ggplot2)
 	# variables
 	aliases <- as.matrix(read.table(file=genesaliases_file,sep="\t",header=F,col.names=c('uid','alias')))
-	data <- read.table(file=baseout, header=T, com="", sep="\t",row.names=1)
+	data <- read.table(file=matrixfile, header=T, com="", sep="\t",row.names=1)
 	gene_names <- convert_from_uid(aliases,rownames(data))
 	rownames(data)<-gene_names
 	
@@ -542,23 +543,28 @@ edgeR_gene_plots_all = function(genesaliases_file,baseout='tmp'){
 	main_graph <- main_graph + theme(axis.text.y = element_text(size=12, colour = rgb(0,0,0),vjust=0.5))
 	main_graph <- main_graph + theme(plot.title = element_text(lineheight=0.8, face=quote(bold)))
 
-	pdf(file=paste(baseout,'.per_gene_plots.pdf',sep=''))
-	if (length(sample_names) < 20){
-		par(mfrow=c(1, 2),oma=c(5,0.1,1,0.1))
-	}else{
-		par(mfrow=c(1, 1),oma=c(5,0.1,1,0.1))
-	}
+	# pdf(file=paste(baseout,'.per_gene_plots.pdf',sep=''))
+#	if (length(sample_names) < 20){
+#		par(mfrow=c(1, 2),oma=c(5,0.1,1,0.1))
+#	}else{
+#		par(mfrow=c(1, 1),oma=c(5,0.1,1,0.1))
+#	}
 	for (i in 1:length(ordered.data[,1])) {
+		gene_alias<-row.names(ordered.data[i,]);
+		gene_uid<-aliases[which(aliases[,2] == gene_alias),1]
+		#pdf(file=paste(outdir,gene_uid,'_gene_expression.pdf',sep=''))
+		# unlike pdf, svg uses cairo so may not be supported; also it can only print 1 page, not multple pages
+		if (do_png == TRUE){
+			png(file=paste(outdir,gene_uid,'_gene_expression.png',sep=''), width = 1200, height = 800)
+		}else{
+			svg(file=paste(outdir,gene_uid,'_gene_expression.svg',sep=''), width = 7, height = 10);
+		}
 		d<-data.frame(val=as.numeric(ordered.data[i,]),cat=as.factor(colnames(ordered.data[i,])))
-		#ymin <- min(d$cat);
-		#ymax <- max(d$cat);
 		print ( main_graph + ggtitle(row.names(ordered.data[i,])) + geom_point(data=d,aes(x=cat,y=val),colour = "red",size=3) )
-		#normal plot; it's a line plot so counter-intuitive
-		#d <- ordered.data[i,]
-		#plot(as.numeric(d), type="l", ylim=c(ymin,ymax), main=row.names(ordered.data[i,]),col="blue", xaxt="n", xlab="", ylab="TMM-norm. eff. counts")
-		#axis(side=1, at=1:length(d), labels=sample_names, las=2,cex.axis=0.5)
+		dev.off()
 	}  
-	dev.off()
+	rm(i,d)
+	#dev.off()
 }
 
 edgeR_differential_expression = function(genesaliases_file,baseout='tmp',kclusters = 10){
