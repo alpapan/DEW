@@ -203,7 +203,7 @@ use Text::CSV_XS;
 use Fasta_reader;
 use Cwd;
 use JSON;
-use Compress::Snappy;
+use Compress::LZ4;
 
 #use IO::Compress::Bzip2 qw(bzip2 $Bzip2Error);
 #use IO::Uncompress::Bunzip2 qw(bunzip2 $Bunzip2Error);
