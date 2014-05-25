@@ -1602,6 +1602,9 @@ sub starts_alignments() {
     ( $alignment_bam_file, $alignment_sam_file ) =
       &prepare_alignment( $file_to_align, $i );
    }
+   
+   next if $only_alignments;
+   
    $aligned_ids_hashref =
      &process_depth_of_coverage( $file_to_align, $readset,
                                  $alignment_bam_file );
@@ -1675,6 +1678,8 @@ sub starts_alignments() {
     my ( $alignment_bam_file, $alignment_sam_file ) =
       &prepare_alignment( $new_file_to_align, $i );
 
+    next if $only_alignments;
+
     #too slow:
     $aligned_ids_hashref =
       &process_depth_of_coverage( $new_file_to_align, $readsets[$i],
@@ -1737,6 +1742,10 @@ sub prepare_alignment_from_existing() {
  &perform_correct_bias( $alignment_bam_file, $file_to_align, $readset,
                         $alignment_bam_file . '.namesorted' )
    if ($perform_bias_correction);
+   
+   next if $only_alignments;
+   
+   
  &process_alignments( $alignment_bam_file, $readset, $readset2 );
  return ( $alignment_bam_file, $alignment_sam_file );
 }
@@ -1748,10 +1757,14 @@ sub prepare_alignment() {
  my ( $rpkm_hashref,       $eff_counts_hashref );
  my ( $alignment_bam_file, $alignment_sam_file ) =
    &perform_alignments( $file_to_align, $readset, $readset2 );
+   
  ( $alignment_bam_file, $rpkm_hashref, $eff_counts_hashref ) =
    &perform_correct_bias( $alignment_bam_file, $file_to_align, $readset,
                           $alignment_sam_file . '.namesorted' )
    if ($perform_bias_correction);
+   
+   next if $only_alignments;
+   
  &process_alignments( $alignment_bam_file, $readset, $readset2 );
  return ( $alignment_bam_file, $alignment_sam_file );
 }
