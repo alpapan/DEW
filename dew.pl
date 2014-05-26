@@ -205,8 +205,9 @@ use Cwd;
 use JSON;
 use Compress::LZ4;
 
-#use IO::Compress::Bzip2 qw(bzip2 $Bzip2Error);
-#use IO::Uncompress::Bunzip2 qw(bunzip2 $Bunzip2Error);
+#threads
+use Thread_helper;
+use threads::shared;
 
 #db
 use DBI qw(:sql_types);
@@ -415,6 +416,9 @@ my (
 ) = &sqlite_init();
 my $file_for_alignment = &prepare_input_data();
 
+# this stores all the expression data for creating the coverage graphs without database acceess
+my %expression_coverage_stats_hash ;
+
 if ( !-s $counts_expression_level_matrix
      || ( $contextual_alignment && $debug && $debug >= 2 ) )
 {
@@ -424,54 +428,66 @@ if ( !-s $counts_expression_level_matrix
   exit(0);
  }
  &perform_stats();
- &sqlite_backup() unless $db_use_file;
  &process_expression_level();
- &print_binary_table();
  &sqlite_backup() unless $db_use_file;
+
+ # from now on, we don't need to write to the database
  close STATS;
  close STATS_RATIO;
+ &print_binary_table();
+if ($only_alignments) {
+ print "User stop requested after alignments are completed.\n";
+ &process_completion();
+}
 }
 else {
  print
 "Expression data already exists ($counts_expression_level_matrix). Will not reprocess.\n";
+ # we need to get all the expression coverage data
+ &get_all_expression_data();
 }
 
 if ($only_alignments) {
  print "User stop requested after alignments are completed.\n";
  &process_completion();
 }
-elsif ($gene_graphs_only) {
+
+my $expression_coverage_stats_hashref = shared_clone(\%expression_coverage_stats_hash);
+undef(%expression_coverage_stats_hash);
+
+# get TMM normalized expression. this is relatively fast.
+my $check_lines = `wc -l < $counts_expression_level_matrix`;
+die "No expression data available (empty $counts_expression_level_matrix)!\n"
+  unless ( -s $counts_expression_level_matrix && $check_lines > 1 );
+my $fpkm_expression_level_matrix_TMM = &perform_TMM_normalization_edgeR($counts_expression_level_matrix);
+
+$check_lines = `wc -l < $fpkm_expression_level_matrix_TMM `
+  if $fpkm_expression_level_matrix_TMM;
+die "edgeR did not produce any TMM output ($fpkm_expression_level_matrix_TMM)!\n"
+  unless ( -s $fpkm_expression_level_matrix_TMM && $check_lines > 1 );
+
+# this needs the database in order to do pairwise comparisons...
+if (!$no_pairwise) {
+ print "\nPreparing edgeR differential expression data and graphs, This may take a long time if you have a large number of groups (use -no_pairwise to not do that in the future)\n";
+ &perform_edgeR_pairwise();
+ &prepare_edgeR_graphs();
+ my ( $html2d, $html3d ) = &prepare_scatter_for_canvas($fpkm_expression_level_matrix_TMM);
+}else{
+ print "User requested no pairwise edgeR comparisons...\n";
+}
+
+## from now on, we have no db access? we can multithread.
+&sqlite_destroy();
+
+&perform_coverage_graphs($expression_coverage_stats_hashref);
+
+if ($gene_graphs_only) {
  print "User stop requested after gene coverage graphs were completed.\n";
  &process_completion();
 }
 
-my $check_lines = `wc -l < $counts_expression_level_matrix`;
-die "No expression data available (empty $counts_expression_level_matrix)!\n"
-  unless ( -s $counts_expression_level_matrix && $check_lines > 1 );
-my $fpkm_expression_level_matrix_TMM =
-  &perform_TMM_normalization_edgeR($counts_expression_level_matrix);
-
-$check_lines = `wc -l < $fpkm_expression_level_matrix_TMM `
-  if $fpkm_expression_level_matrix_TMM;
-die "edgeR did not produce any output ($fpkm_expression_level_matrix_TMM)!\n"
-  unless ( -s $fpkm_expression_level_matrix_TMM && $check_lines > 1 );
-
 &process_edgeR_graphs_overview($fpkm_expression_level_matrix_TMM);
 
-if ($no_pairwise) {
- print
-"User stop requested after edgeR normalization and graph printing. No pairwise comparisons done.\n";
- &process_completion();
-}
-
-print
-"\nPreparing edgeR differential expression data and graphs, This may take a long time if you have a large number of groups (use -no_pairwise to not do that in the future)\n";
-
-&perform_edgeR_pairwise();
-
-&prepare_edgeR_graphs();
-my ( $html2d, $html3d ) =
-  &prepare_scatter_for_canvas($fpkm_expression_level_matrix_TMM);
 
 &process_completion();
 
@@ -524,8 +540,7 @@ sub sqlite_backup() {
   rename( $backup_db_file, $backup_db_file . '.old' ) if $keep;
   unlink($backup_db_file);
   rename( $backup_db_file . ".tmp", $backup_db_file );
-  print
-"Checkpointing database ($backup_db_file). Done: SQL database checkpointed!\n";
+  print "Checkpointing database ($backup_db_file). Done: SQL database checkpointed!\n";
  }
  else {
   print
@@ -787,7 +802,8 @@ sub sqlite_set_get_as_housekeeping() {
 }
 
 sub sqlite_destroy() {
- print &mytime . "Closing SQL connections\n";
+ return unless $dbh;
+ print &mytime . "Closing SQL connections and backing-up\n";
  $get_readset_filename->finish();
  $get_from_seqdb->finish();
  $get_hash_from_seqdb->finish();
@@ -839,49 +855,62 @@ sub sqlite_destroy() {
   );
   $dbh->do("CREATE INDEX depth_tmp_idx1 ON depth_tmp(seq_md5hash,readset_id)");
  }
- &sqlite_backup() unless $db_use_file;
+ #&sqlite_backup() unless $db_use_file;
+ my $backup_db_file = $db_use_file ? $db_file . '.backup' : $db_file;
+ print "\nCheckpointing database ($backup_db_file). DO NOT halt...\r";
+ # ensure no problems if it crashes while backing up
+ $dbh->sqlite_backup_to_file( $backup_db_file . ".tmp" );
+ if ( -s $backup_db_file . ".tmp" ) {
+  unlink( $backup_db_file . '.old' );
+  rename( $backup_db_file, $backup_db_file . '.old' );
+  unlink($backup_db_file);
+  rename( $backup_db_file . ".tmp", $backup_db_file );
+  print "Checkpointing database ($backup_db_file). Done: SQL database checkpointed!\n";
+ } 
  $dbh->disconnect();
  undef($dbh);
  unlink( $db_file . '.active' ) if $db_use_file;
 }
 
+sub not_used1() {
 ####
 ## how to store the entire alignment in the database.... not used.
-#sub sqlite_check_align_old($) {
-#  my $readset = shift;
-#  $check_db->execute( $reference_file_md5sum, $readset );
-#  my $result = $check_db->fetchrow_arrayref();
-#  $result = $result ? int(1) : int(0);
-#  print "Readset $readset was already in DB. Not re-aligning.\n" if $result;
-#  return $result;
-#}
-#sub sqlite_add_align_old($) {
-#  my $readset    = shift;
-#  my $bamfile    = shift;
-#  my $bamcontent = `cat $bamfile`;
-#  $add_to_db->bind_param( 1, $reference_file_md5sum );
-#  $add_to_db->bind_param( 2, $readset );
-#  $add_to_db->bind_param( 3, $bamcontent, SQL_BLOB );
-#  $add_to_db->execute();
-#  $check_db->execute( $reference_file_md5sum, $readset );
-#  my $result = $check_db->fetchrow_arrayref();
-#  $result = $result ? int(1) : int(0);
-#  print "Readset $readset added to DB\n" if $result;
-#  return $result;
-#}
-#sub sqlite_get_align_old($) {
-#  my $readset = shift;
-#  my $bam     = shift;
-#  $get_from_aligndb->execute( $reference_file_md5sum, $readset );
-#  my $row = $get_from_aligndb->fetchrow_arrayref();
-#  my $result = $row ? int(1) : int(0);
-#  open( BAM, ">$bam" );
-#  print BAM $row->[0];
-#  close BAM;
-#  &process_cmd("$samtools_exec index $bam")
-#    unless -s $bam . '.bai' && ( -s $bam . '.bai' ) > 200;
-#  return $result;
-#}
+ #sub sqlite_check_align_old($) {
+ #  my $readset = shift;
+ #  $check_db->execute( $reference_file_md5sum, $readset );
+ #  my $result = $check_db->fetchrow_arrayref();
+ #  $result = $result ? int(1) : int(0);
+ #  print "Readset $readset was already in DB. Not re-aligning.\n" if $result;
+ #  return $result;
+ #}
+ #sub sqlite_add_align_old($) {
+ #  my $readset    = shift;
+ #  my $bamfile    = shift;
+ #  my $bamcontent = `cat $bamfile`;
+ #  $add_to_db->bind_param( 1, $reference_file_md5sum );
+ #  $add_to_db->bind_param( 2, $readset );
+ #  $add_to_db->bind_param( 3, $bamcontent, SQL_BLOB );
+ #  $add_to_db->execute();
+ #  $check_db->execute( $reference_file_md5sum, $readset );
+ #  my $result = $check_db->fetchrow_arrayref();
+ #  $result = $result ? int(1) : int(0);
+ #  print "Readset $readset added to DB\n" if $result;
+ #  return $result;
+ #}
+ #sub sqlite_get_align_old($) {
+ #  my $readset = shift;
+ #  my $bam     = shift;
+ #  $get_from_aligndb->execute( $reference_file_md5sum, $readset );
+ #  my $row = $get_from_aligndb->fetchrow_arrayref();
+ #  my $result = $row ? int(1) : int(0);
+ #  open( BAM, ">$bam" );
+ #  print BAM $row->[0];
+ #  close BAM;
+ #  &process_cmd("$samtools_exec index $bam")
+ #    unless -s $bam . '.bai' && ( -s $bam . '.bai' ) > 200;
+ #  return $result;
+ #}
+}
 
 sub sqlite_get_seq_length($) {
  my $md5sum = shift;
@@ -1046,15 +1075,16 @@ sub sqlite_check_depth_readset($) {
 }
 
 sub sqlite_add_depth_data($$$) {
- my $seq_md5hash      = shift;
- my $readset_filename = shift;
- my $hash_ref         = shift;
- my $freeze           = freeze($hash_ref);
- my $base_depth_data_serialized = compress (\$freeze) || die "compression failed\n";
- 
+ my $seq_md5hash                = shift;
+ my $readset_filename           = shift;
+ my $hash_ref                   = shift;
+ my $freeze                     = freeze($hash_ref);
+ my $base_depth_data_serialized = compress( \$freeze )
+   || die "compression failed\n";
+
  $check_depth_data->execute( $seq_md5hash, $readset_filename );
  my $result = $check_depth_data->fetchrow_arrayref();
- 
+
  $delete_depth_data->execute( $seq_md5hash, $readset_filename ) if $result;
  $add_depth_data->bind_param( 1, $seq_md5hash );
  $add_depth_data->bind_param( 2, $readset_filename );
@@ -1069,9 +1099,9 @@ sub sqlite_get_depth_data($$) {
  my $readset_filename = shift;
  $check_depth_data->execute( $seq_md5hash, $readset_filename );
  my $result = $check_depth_data->fetchrow_arrayref();
- 
+
  if ( $result->[0] ) {
-  my $ref = decompress (\$result->[0]) || die "Decompression failed\n";
+  my $ref = decompress( \$result->[0] ) || die "Decompression failed\n";
   return thaw($ref);
  }
  return;
@@ -1121,6 +1151,8 @@ sub perform_checks_preliminary() {
  }
 
  $no_kangade = 1 if ($no_pairwise);
+
+ $never_skip = 1 if $genomewide;
 
  if (@readsets2) {
   if ( scalar(@readsets2) < scalar(@readsets) ) {
@@ -1361,7 +1393,7 @@ sub prepare_input_data() {
      &perform_readset_metadata( $readsets[$i] );
   }
  }
- &sqlite_backup( 1, $db_file . '.counted_readsets.seed' );
+ &sqlite_backup( 1, $db_file . '.counted_readsets.seed' ) unless $initial_db;
 
  &sqlite_backup() if !$db_use_file && $do_backup;
  print "\n" . &mytime . "Preparing references...\n";
@@ -1426,11 +1458,11 @@ sub prepare_input_data() {
    next unless $data[1];
    my $seq_md5hash = $data[0];
    push( @reference_sequence_list, $data[1] );
-   $user_alias{$seq_md5hash} = $data[1];
+   $user_alias{$seq_md5hash} = { 'id' => $data[1], 'length' => $data[2] };
    $check_hash_from_seqdb->execute($seq_md5hash);
    my $check = $check_hash_from_seqdb->fetchrow_arrayref();
    die
-"Could not find the md5sum $seq_md5hash in the database, did you do something manually?! Please deleted the $file_to_align.checked file and restart\n"
+"Could not find the md5sum $seq_md5hash in the database, did you do something manually?! Please delete the $file_to_align.checked file and restart\n"
      if !$check;
   }
   close IN;
@@ -1470,13 +1502,13 @@ sub prepare_input_data() {
    $id = 'Query' unless $id;
    my $seq_length = length($sequence);
    print BED "$id\t1\t$seq_length\t$id\t0\t+\n";
-   print MD5SUMS "$seq_md5hash\t$id\n";
+   print MD5SUMS "$seq_md5hash\t$id\t$seq_length\n";
    &sqlite_add_seq_md5( $id, $seq_md5hash, $seq_length );
    die "Some of your data has identical sequences!\n $id vs "
-     . $user_alias{$seq_md5hash}
+     . $user_alias{$seq_md5hash}{'id'}
      . "\nUse the option -remove_redund to remove them before processing.\n"
-     if $user_alias{$seq_md5hash};
-   $user_alias{$seq_md5hash} = $id;
+     if $user_alias{$seq_md5hash}{'id'};
+   $user_alias{$seq_md5hash} = { 'id' => $id, 'length' => $seq_length };
   }
   close MD5SUMS;
   close BED;
@@ -1545,7 +1577,7 @@ sub starts_alignments() {
    . "Starting alignments against up to "
    . scalar(@readsets)
    . " readsets\n";
-   print "\tChecking for completed alignments...\n";
+ print "\tChecking for completed alignments...\n";
  my $todo;
  ## This is very slow as it checks every readset?
  for ( my $i = 0 ; $i < (@readsets) ; $i++ ) {
@@ -1602,9 +1634,9 @@ sub starts_alignments() {
     ( $alignment_bam_file, $alignment_sam_file ) =
       &prepare_alignment( $file_to_align, $i );
    }
-   
+
    next if $only_alignments;
-   
+
    $aligned_ids_hashref =
      &process_depth_of_coverage( $file_to_align, $readset,
                                  $alignment_bam_file );
@@ -1742,10 +1774,9 @@ sub prepare_alignment_from_existing() {
  &perform_correct_bias( $alignment_bam_file, $file_to_align, $readset,
                         $alignment_bam_file . '.namesorted' )
    if ($perform_bias_correction);
-   
-   next if $only_alignments;
-   
-   
+
+ return if $only_alignments;
+
  &process_alignments( $alignment_bam_file, $readset, $readset2 );
  return ( $alignment_bam_file, $alignment_sam_file );
 }
@@ -1757,14 +1788,14 @@ sub prepare_alignment() {
  my ( $rpkm_hashref,       $eff_counts_hashref );
  my ( $alignment_bam_file, $alignment_sam_file ) =
    &perform_alignments( $file_to_align, $readset, $readset2 );
-   
+
  ( $alignment_bam_file, $rpkm_hashref, $eff_counts_hashref ) =
    &perform_correct_bias( $alignment_bam_file, $file_to_align, $readset,
                           $alignment_sam_file . '.namesorted' )
    if ($perform_bias_correction);
-   
-   next if $only_alignments;
-   
+
+ return if $only_alignments;
+
  &process_alignments( $alignment_bam_file, $readset, $readset2 );
  return ( $alignment_bam_file, $alignment_sam_file );
 }
@@ -2731,17 +2762,14 @@ sub perform_stats() {
  if ( !$no_graphs ) {
   print "\n"
     . &mytime()
-    . "Stats n graphs: Calculating per gene stats and creating images in $result_dir/gene_coverage_plots/ \n";
+    . "Stats n graphs: Calculating per gene stats\n";
   print LOG &mytime()
-    . "Calculating per gene stats and creating images in $result_dir/gene_coverage_plots/ \n";
+    . "Calculating per gene stats\n";
  }
  else {
   print "\n" . &mytime() . "Calculating per gene stats in $result_dir \n";
   print LOG &mytime() . "Calculating per gene stats in $result_dir \n";
  }
- my $timer_counter = int(0);
- my $timer         = new Time::Progress;
- $timer->attr( min => 0, max => scalar(@reference_sequence_list) );
  open( STATS,       ">$result_dir/$uid.raw_stats.tsv" )   || die($!);
  open( STATS_RATIO, ">$result_dir/$uid.ratio.stats.tsv" ) || die($!);
  print STATS_RATIO
@@ -2750,29 +2778,81 @@ sub perform_stats() {
    if $perform_bias_correction;
  print STATS_RATIO "\n";
  print STATS
-"Checksum\tReadset\tGene alias\tRPKM\tMean\tstd. dev\tMedian\tUpper limit\tTotal hits\tGene coverage\n";
+"Checksum\tReadset\tGene alias\tRaw RPKM\tMean\tstd. dev\tMedian\tUpper limit\tTotal hits\tGene coverage\n";
 
  foreach my $id (@reference_sequence_list) {
-  &process_main_stats($id);
-  $timer_counter++;
-  if ( $timer_counter % 100 == 0 ) {
-   print $timer->report( "eta: %E min, %40b %p\r", $timer_counter );
-
-   # I/O friendlyness
-   sleep(1);
-   if ( $timer_counter % 1000 == 0 ) {
-    sleep(5);
-    $dbh->do("PRAGMA shrink_memory");
-   }
-  }
- }
- if ( !$no_graphs ) {
-  &rename_graph_files_md52gene("$result_dir/gene_coverage_plots/");
+  &process_main_stats( $id );
  }
 }
 
-sub make_coverage_graphs($$$) {
+sub get_all_expression_data() {
 
+ # we need this in order to enable threading for coverage graphs etc.
+ foreach my $seq_md5hash ( keys %user_alias ) {
+  my $seq_id   = $user_alias{$seq_md5hash}{'id'};
+  my $seq_size = $user_alias{$seq_md5hash}{'length'};
+  for ( my $i = 0 ; $i < scalar(@readsets) ; $i++ ) {
+   my $readset_metadata_ref = &sqlite_get_readset_metadata( $readsets[$i] );
+   my $readset_name         = $readset_metadata_ref->{'alias'};
+   my $hit_stat             = Statistics::Descriptive::Full->new();
+   my $stats_ref = &sqlite_get_expression_statistics( $seq_md5hash, $readsets[$i] );
+   my $total_hit_reads =
+     $stats_ref->{'total_hits'} ? $stats_ref->{'total_hits'} : int(0);
+   my $depth_hash_ref = &sqlite_get_depth_data( $seq_md5hash, $readsets[$i] );
+   my $hit_median = $stats_ref->{'median_hits'};
+   if ( !$depth_hash_ref ) {
+    warn "No depth data for $seq_id vs $readset_name. Skipping\n"
+      if $debug;
+    print LOG "No depth data for $seq_id vs $readset_name. Skipping\n";
+    next;
+   }
+   $expression_coverage_stats_hash{$seq_md5hash}{ $readsets[$i] } = {
+                                            'total_reads' => $total_hit_reads,
+                                            'median_hits' => $hit_median,
+                                            'depth'       => $depth_hash_ref,
+                                            'expression'  => $stats_ref
+   };
+  }
+ }
+}
+
+sub perform_coverage_graphs() {
+ return if $no_graphs;
+ print &mytime() ."Printing coverage graphs for each gene in $result_dir/gene_coverage_plots/\n";
+ print LOG &mytime() ."Printing coverage graphs for each gene in $result_dir/gene_coverage_plots/\n";
+ my $expression_coverage_stats_hashref = shift;
+ my $timer_counter = int(0);
+ my $timer         = new Time::Progress;
+ $timer->attr( min => 0, max => scalar(keys %user_alias) );
+ my $thread_helper = new Thread_helper($threads);
+
+
+ foreach my $seq_md5hash ( keys %user_alias ) {
+   my $imagefile = "$result_dir/gene_coverage_plots/$seq_md5hash" . "_gene_coverage.svg";
+   next if -s $imagefile; 
+   my $thread = threads->create('make_coverage_graph',$seq_md5hash, $expression_coverage_stats_hashref);
+   $thread_helper->add_thread($thread);
+  $timer_counter++;
+  if ( $timer_counter % 100 == 0 ) {
+   print $timer->report( "eta: %E min, %40b %p\r", $timer_counter );
+   # I/O friendlyness
+   sleep(1);
+   sleep(5) if ( $timer_counter % 1000 == 0 ); 
+  }
+ }
+ $thread_helper->wait_for_all_threads_to_complete();
+ 
+ print &mytime() ."Done.\n";
+ print LOG &mytime() ."Done.\n";
+ &rename_graph_files_md52gene("$result_dir/gene_coverage_plots/");
+}
+
+sub make_coverage_graph($$$) {
+ my ( $seq_md5hash, $expression_coverage_stats_hashref ) = @_;
+ my $seq_id          = $user_alias{$seq_md5hash}{'id'};
+ my $seq_size        = $user_alias{$seq_md5hash}{'length'};
+ my $memory_hash_ref = $expression_coverage_stats_hashref->{$seq_md5hash};
+  
  # the testws Bio::Graphics had a bug and had to
  # comment out the integer addition at
  # Bio/Graphics/Glyph/xyplot.pm ca line 315
@@ -2782,8 +2862,6 @@ sub make_coverage_graphs($$$) {
  #SVG is up to date (2.59).
  #GD::SVG is up to date (0.33).
  #Bio::Graphics is up to date (2.37).
-
- my ( $seq_md5hash, $seq_id, $seq_size, $memory_hash_ref ) = @_;
 
  my $graph_file =
    "$result_dir/gene_coverage_plots/$seq_md5hash" . "_gene_coverage.svg";
@@ -2829,8 +2907,10 @@ sub make_coverage_graphs($$$) {
  unless ($never_skip) {
   foreach my $readset (@readsets) {
    my $ref = $memory_hash_ref->{$readset};
+   
+   
    next
-     if (    !$ref
+     if (    !$ref || $ref->{'total_reads'} < $binary_min_reads
           || !$ref->{'median_hits'}
           || $ref->{'median_hits'} == 0
           || ( $median_cutoff && $ref->{'median_hits'} < $median_cutoff ) );
@@ -2839,12 +2919,10 @@ sub make_coverage_graphs($$$) {
  }
 
  foreach my $readset (@readsets) {
-
-  #my $readset_metadata_ref = &sqlite_get_readset_metadata($readset);
-  #my $readset_name         = $readset_metadata_ref->{'alias'};
-  my $readset_name = $library_aliases{$readset};
-  my $expression_statistics_ref =
-    &sqlite_get_expression_statistics( $seq_md5hash, $readset );
+  my $ref = $memory_hash_ref->{$readset};
+  my $readset_name              = $library_aliases{$readset};
+  
+  my $expression_statistics_ref = $ref->{'expression'};
   die "Cannot find any coverage statistics for $seq_id vs $readset !\n"
     unless $expression_statistics_ref;
   my $mean =
@@ -2876,7 +2954,7 @@ sub make_coverage_graphs($$$) {
     if $hit_sd;
   $pivot = $expression_statistics_ref->{'median_hits'}
     if $expression_statistics_ref->{'median_hits'} && $pivot < 0;
-  my $stats_description = " mean: $mean median: $median RPKM: $rpkm";
+  my $stats_description = " mean: $mean median: $median Unnorm. RPKM: $rpkm";
   $stats_description .= " pivot: $pivot" if $pivot;
   $stats_description .=
     " FPKM: $express_fpkm Effective counts: $effective_counts "
@@ -2901,8 +2979,7 @@ sub make_coverage_graphs($$$) {
     )
   {
 
-   #my $depth_hash_ref = &sqlite_get_depth_data( $seq_md5hash, $readset );
-   my $depth_hash_ref = $memory_hash_ref->{$readset}->{'depth'};
+   my $depth_hash_ref = $ref->{'depth'};
 
    my $step_size = $seq_size >= 200 ? 10 : 5;
 
@@ -2984,12 +3061,14 @@ sub process_main_stats($) {
 
  # i don't think there is a memory leak here.
  #having both bp data and rpkm, we can post process
- my $seq_id           = shift;
- my $seq_md5hash      = &sqlite_get_md5($seq_id);
- my $seq_size         = &sqlite_get_seq_length($seq_md5hash);
+ my $seq_id = shift;
+
+ # my $seq_size         = &sqlite_get_seq_length($seq_md5hash);
+ my $seq_md5hash = &sqlite_get_md5($seq_id);
+ my $seq_size    = $user_alias{$seq_md5hash}{'length'};
+
  my $readsets_covered = int(0);
  $demand_all_readsets = scalar @readsets if $demand_all_readsets;
- my %expression_coverage_stats;
 
  for ( my $i = 0 ; $i < scalar(@readsets) ; $i++ ) {
   my $readset_metadata_ref = &sqlite_get_readset_metadata( $readsets[$i] );
@@ -3042,9 +3121,13 @@ sub process_main_stats($) {
   print STATS
 "$seq_md5hash\t$readset_name\t$seq_id\t$rpkm\t$hit_mean\t$hit_sd\t$hit_median\t$hit_max\t$total_hit_reads\t$coverage\n";
 
-  $expression_coverage_stats{ $readsets[$i] }{'median_hits'} = $hit_median;
-  $expression_coverage_stats{ $readsets[$i] }{'depth'}       = $depth_hash_ref;
-
+  if ( !$only_alignments ) {
+   $expression_coverage_stats_hash{$seq_md5hash}{ $readsets[$i] } = {
+                                                   'median_hits' => $hit_median,
+                                                   'depth' => $depth_hash_ref,
+                                                   'expression' => $stats_ref
+   };
+  }
  }
 
  if ( $readsets_covered == 0
@@ -3059,9 +3142,6 @@ sub process_main_stats($) {
   return;
  }
 
- &make_coverage_graphs( $seq_md5hash, $seq_id, $seq_size,
-                        \%expression_coverage_stats )
-   if !$no_graphs;
 }
 
 sub print_binary_table() {
@@ -3117,7 +3197,7 @@ sub print_binary_table() {
  }
  print OUT $p;
  foreach my $seq_md5hash ( sort keys %binary_table ) {
-  my $seq_id = $user_alias{$seq_md5hash};
+  my $seq_id = $user_alias{$seq_md5hash}{'id'};
   my $print  = $seq_id;
   foreach my $readset_name (@ordered_readsets) {
    my $is_expressed = $binary_table{$seq_md5hash}{$readset_name} ? 1 : int(0);
@@ -3129,9 +3209,7 @@ sub print_binary_table() {
 }
 
 sub process_expression_level() {
-
-#DEBUG HERE IS A PROBLEM... SOMEWHERE
-# given an array of genes with expression levels, sort it, and give me a distribution so i can see how it looks.
+ 
  my $expression_level_tsv = "$result_dir/$uid.expression_levels.stats.tsv";
  my $fpkm_expression_level_matrix =
    "$result_dir/$uid.expression_levels.matrix.fpkm";
@@ -3178,6 +3256,9 @@ sub process_expression_level() {
      . $stats_ref_C->{'kangade_counts'} . "\n";
 
    # now parse each pair of readsets
+   unless ($no_pairwise){
+   
+   
    for ( my $k = $i + 1 ; $k < scalar(@readsets) ; $k++ ) {
     next if $readsets[$i] eq $readsets[$k];
     my $readset_metadata_E = &sqlite_get_readset_metadata( $readsets[$k] );
@@ -3243,6 +3324,9 @@ sub process_expression_level() {
        . $kangade_ratio . "\n";
     }
    }
+   
+   }
+   
   }
   chop($count_matrix_print);
   chop($fpkm_matrix_print);
@@ -3376,6 +3460,7 @@ sub process_completion() {
    unlink("$baseout.bam.bai");
   }
  }
+ print "\n";
  exit(0);
 }
 
@@ -3463,14 +3548,14 @@ sub process_edgeR_graphs_overview() {
  my $norm_matrix_file = shift;
  return if -f "$norm_matrix_file.per_gene_plots.complete";
  my $plot_dir = $result_dir . 'gene_expression_plots/';
- print
-"Producing expression graphs for each gene. This can take up to a minute per gene\n";
+ print &mytime() ."Producing expression graphs for each gene. This can take up to a minute per gene\n";
+ print LOG &mytime() ."Producing expression graphs for each gene. This can take up to a minute per gene\n";
  chdir($edgeR_dir);
  $norm_matrix_file = basename($norm_matrix_file);
 
  my $do_png_R = $do_png ? 'TRUE' : 'FALSE';
  my $gene_plots_cmd =
-"edgeR_gene_plots_all('$md5_aliases_file','$norm_matrix_file','$plot_dir',$do_png_R)";
+"edgeR_gene_plots_all('$md5_aliases_file','$norm_matrix_file','$plot_dir',$do_png_R,$threads)";
 
  my $R_script = "$norm_matrix_file.R";
  open( OUTR, ">$R_script" ) or die "Error, cannot write to $R_script. $!";
@@ -3614,7 +3699,8 @@ sub prepare_heatmap_for_canvas() {
   @aliases = qw/none/ unless @aliases;
 
   #debug trial
-  my $alias = $user_alias{$seq_md5sum} ? $user_alias{$seq_md5sum} : $seq_md5sum;
+  my $alias =
+    $user_alias{$seq_md5sum} ? $user_alias{$seq_md5sum}{'id'} : $seq_md5sum;
   $for_json_array{'y'}{'vars'}->[$i] = $alias;
 
 # kind of have to do this because R has no access to the aliases and aliases are important as they are the only way to ensure that
@@ -3780,7 +3866,7 @@ sub prepare_scatter_for_canvas() {
    my @aliases = &sqlite_get_seq_aliases($seq_md5sum);
    @aliases = qw/none/ unless @aliases;
    my $alias =
-     $user_alias{$seq_md5sum} ? $user_alias{$seq_md5sum} : $seq_md5sum;
+     $user_alias{$seq_md5sum} ? $user_alias{$seq_md5sum}{'id'} : $seq_md5sum;
    push( @{ $for_json_array{'y'}{'vars'} },     $alias );
    push( @{ $for_json_array{'z'}{'checksum'} }, $seq_md5sum );
    push( @{ $for_json_array{'z'}{'aliases'} },  join( ", ", @aliases ) );
@@ -4084,9 +4170,11 @@ sub write_normalized_fpkm_file {
 
  while ( my $ln = <IN> ) {
   chomp($ln);
-  my @data    = split( "\t", $ln );
-  my $gene    = $data[0];
-  my $seq_len = &sqlite_get_seq_length($gene)
+  my @data = split( "\t", $ln );
+  my $gene = $data[0];
+
+#my $seq_len = &sqlite_get_seq_length($gene)     or die "Error, no seq length for $gene";
+  my $seq_len = $user_alias{$gene}{'length'}
     or die "Error, no seq length for $gene";
   my $print = $gene;
   for ( my $i = 1 ; $i < scalar(@data) ; $i++ ) {
@@ -4110,7 +4198,7 @@ sub write_normalized_fpkm_file {
  link( $normalized_fpkm_file, $matrix_file . '.normalized.FPKM' );
 
  # append FPKM values in the main text outfile and also do ratios
- print "Storing results...\n";
+ print "Writing out results as tab delimited files (*stats.tsv)...\n";
  open( STATSIN, "$result_dir/$uid.expression_levels.stats.tsv" ) || die($!);
  my $header_S = <STATSIN>;
  my @headers = split( "\t", $header_S );
@@ -4206,16 +4294,19 @@ sub rename_graph_files_md52gene() {
   my $md5 = $1 || next;
   my $xtn = $2 ? $2 : '';
   next unless $user_alias{$md5};
-  my $new_name = $user_alias{$md5};
+  my $new_name = $user_alias{$md5}{'id'};
 
   #  $new_name =~ s/[^\w\.\-\_]+/_/g;
   my $new_filename = $dirname . '/gene_names/' . $new_name . $xtn;
   symlink( "../" . $filename, $new_filename );
  }
  @files = ();
- print "\n";
  if ($convert_imagemagick_exec) {
+  print &mytime."Creating PDF for $dir using imagemagick\n";
+  print LOG &mytime."Creating PDF for $dir using imagemagick\n";
   chdir( $dir . "/gene_names" );
+  my $outdir = "PDF";
+  mkdir $outdir unless -d $outdir;
   my ( @file_slice, $count_files );
   my $slice_count = 1;
 
@@ -4229,16 +4320,16 @@ sub rename_graph_files_md52gene() {
    if ( $count_files == 500 && @file_slice ) {
     &process_cmd(   "$convert_imagemagick_exec "
                   . join( " ", @file_slice )
-                  . " rnaseq_$slice_count.pdf" );
+                  . " $outdir/rnaseq_$slice_count.pdf" ) unless -s "$outdir/rnaseq_$slice_count.pdf";
     $slice_count++;
     @file_slice  = ();
     $count_files = int(0);
    }
   }
+  # last ones
   &process_cmd(   "$convert_imagemagick_exec "
                 . join( " ", @file_slice )
-                . " rnaseq_$slice_count.pdf" )
-    if @file_slice;
+                . " $outdir/rnaseq_$slice_count.pdf" ) if @file_slice &&  !-s "$outdir/rnaseq_$slice_count.pdf";;
   chdir($cwd2);
  }
 }
