@@ -35,6 +35,32 @@ dew_install_lib = function(lib,is_bioconductor=0){
 	}
 }
 
+
+multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
+	# code from R-Cookbook copyright by Winston Chang, winston@stdout.org 
+	# License: Creative Commons Attribution-Share Alike 3.0 Unported License
+	# http://www.cookbook-r.com/Graphs/Multiple_graphs_on_one_page_%28ggplot2%29/
+	require(grid,quietly=T,warn.conflicts=F)
+	plots <- c(list(...), plotlist)
+	numPlots = length(plots)
+	if (is.null(layout)) {
+		layout <- matrix(seq(1, cols * ceiling(numPlots/cols)),
+				ncol = cols, nrow = ceiling(numPlots/cols))
+	}
+	if (numPlots==1) {
+		print(plots[[1]])
+	} else {
+		grid.newpage()
+		pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
+		for (i in 1:numPlots) {
+			# Get the i,j matrix positions of the regions that contain this subplot
+			matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+			print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row,
+							layout.pos.col = matchidx$col))
+		}
+	}
+}
+
 convert_from_uid = function(hash,uids){
 	# not in same order: x <- hash[hash[,1] %in% as.vector(uids),2]
 	# validated:
@@ -214,7 +240,7 @@ TMM_normalize = function(targetsFile, minCPM = 2,minLibs = 1,outfile=NULL) {
 	# only use those rows that have a minimum number of tags (min to be DE)
 	edgeR_obj$CPM <- cpm(edgeR_obj,normalized.lib.sizes=F)
 	edgeR_obj<-edgeR_obj[rowSums(edgeR_obj$CPM >= minCPM) >= minLibs,]
-	# reset library sizes
+	# reset library sizes, this sets it to the sum of counts, including post-express
 	edgeR_obj$samples$lib.size = colSums(edgeR_obj$counts)
 	
 	# run TMM normalization
@@ -233,6 +259,37 @@ TMM_normalize = function(targetsFile, minCPM = 2,minLibs = 1,outfile=NULL) {
 		write.table(edgeR_obj$samples, file=outfile, quote=F, sep="\t", row.names=F)
 	}
 	return (edgeR_obj) 
+}
+
+
+print_statistics_normalized = function(statsfile){
+	require(ggplot2,quietly=T,warn.conflicts=F)
+	data<-read.table(file=statsfile,header=T,sep="\t");
+	#counts
+	p_r_counts<-ggplot(data,aes(x=Raw_Counts,fill=Readset)) + geom_density(alpha=.3)
+	p_e_counts<-ggplot(data,aes(x=Express_eff.counts,fill=Readset)) + geom_density(alpha=.3)
+	p_n_counts<-ggplot(data,aes(x=TMM_Normalized.count,fill=Readset)) + geom_density(alpha=.3) 
+	fileout = paste(statsfile,'_counts.svg',sep='')
+	svg(file=fileout, width = 7, height = 10)
+	multiplot(p_r_counts,p_e_counts,p_n_counts,cols=1)
+	dev.off()
+	
+	#r/fpkm
+	p_rpkm<-ggplot(data,aes(x=RPKM,fill=Readset)) + geom_density(alpha=.3) 
+	p_e_fpkm<-ggplot(data,aes(x=Express_FPKM,fill=Readset)) + geom_density(alpha=.3) 
+	p_tmm_fpkm<-ggplot(data,aes(x=TMM.FPKM,fill=Readset)) + geom_density(alpha=.3) 
+	fileout = paste(statsfile,'_fpkm.svg',sep='')
+	svg(file=fileout, width = 7, height = 10)
+	multiplot(p_rpkm,p_e_fpkm,p_tmm_fpkm,cols=1)
+	dev.off()
+	
+	#tpm
+	p_tmm_tpm<-ggplot(data,aes(x=TMM.TPM,fill=Readset)) + geom_density(alpha=.3)
+	p_e_tpm<-ggplot(data,aes(x=Express_TPM,fill=Readset)) + geom_density(alpha=.3)
+	fileout = paste(statsfile,'_tpm.svg',sep='')
+	svg(file=fileout, width = 7, height = 10)
+	multiplot(p_e_tpm,p_tmm_tpm,cols=1)
+	dev.off()
 }
 
 
@@ -412,7 +469,7 @@ edgeR_DE_postanalysis = function (aliases,edgeR_obj, edgeR_obj_de, baseout='tmp'
 	#detags_alias <- convert_from_uid(aliases,detags_names) 
 	
 	
-	postscript(file=paste(baseout,'.ps',sep=''))
+	svg(file=paste(baseout,'.svg',sep=''))
 	plotSmear(edgeR_obj, de.tags=detags_names)
 	abline(h=c(-1,1), col="blue")
 	dev.off()
@@ -501,7 +558,7 @@ edgeR_DE_postanalysis = function (aliases,edgeR_obj, edgeR_obj_de, baseout='tmp'
 	
 	# heatmap
 	cat ("Producing info for heatmap and other graphs...\n")
-	postscript(file=paste(baseout,'.heatmap.ps',sep=''), horizontal=FALSE, width=8, height=18, paper="special")
+	svg(file=paste(baseout,'.heatmap.svg',sep=''), horizontal=FALSE, width=8, height=18)
 	figure.heatmap1<-heatmap.2(clustering.data, dendrogram="both", Rowv=as.dendrogram(hc_genes), Colv=as.dendrogram(hc_samples), col=myheatcol, RowSideColors=gene_colors,
 			scale="none", density.info="none", trace="none", key=TRUE, keysize=1.2, cexCol=2.5, margins=c(15,15), lhei=c(0.4,2), lwid=c(2.5,4))
 	dev.off();
@@ -566,15 +623,21 @@ edgeR_gene_plots_all = function(genesaliases_file,matrixfile='tmp',outdir='./',d
 	registerDoMC(threads)
 	foreach(i=1:length(data[,1])) %dopar% {
 	#for (i in 1:length(data[,1])) {
-		gene_alias<-gene_names[i];
 		gene_uid<-aliases[which(aliases[,2] == gene_alias),1]
+		filename = paste(outdir,gene_uid,'_gene_expression',sep='')
 		#pdf(file=paste(outdir,gene_uid,'_gene_expression.pdf',sep=''))
 		# unlike pdf, svg uses cairo so may not be supported; also it can only print 1 page, not multple pages
 		if (do_png == TRUE){
-			png(file=paste(outdir,gene_uid,'_gene_expression.png',sep=''), width = 1200, height = 800)
+			filename = paste(filename,'.png',sep='')
+			png(file=filename, width = 1200, height = 800)
 		}else{
-			svg(file=paste(outdir,gene_uid,'_gene_expression.svg',sep=''), width = 7, height = 10);
+			filename = paste(filename,'.svg',sep='')
+			svg(file=filename, width = 7, height = 10);
 		}
+		if (file.exists(filename)){
+			next
+		}
+		gene_alias<-gene_names[i];
 		d<-data.frame(val=as.numeric(data[i,]),cat=as.factor(sample_names))
 		print ( main_graph + ggtitle(gene_alias) + geom_point(data=d,aes(x=cat,y=val),colour = "red",size=3) )
 		dev.off()
@@ -639,7 +702,7 @@ edgeR_differential_expression = function(genesaliases_file,baseout='tmp',kcluste
 	gene_colors <- partition_colors[gene_partition_assignments]
 	
 	# heatmap
-	postscript(file=paste(baseout,'.heatmap.ps',sep=''), horizontal=FALSE, width=8, height=18, paper="special")
+	svg(file=paste(baseout,'.heatmap.svg',sep=''), horizontal=FALSE, width=8, height=18)
 	figure.heatmap1<-heatmap.2(clustering.data, dendrogram="both", Rowv=as.dendrogram(hc_genes), Colv=as.dendrogram(hc_samples), col=myheatcol, RowSideColors=gene_colors, scale="none", density.info="none", trace="none", key=TRUE, keysize=1.2, cexCol=2.5, margins=c(15,15), lhei=c(0.4,2), lwid=c(2.5,4))
 	dev.off();
 	
