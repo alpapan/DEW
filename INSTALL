@@ -1,6 +1,6 @@
 First you need to install some Perl libraries. This can be done by your system administrator or in your own user directory (if setup properly - ask your sysadmin)
 The libraries can be installed like so:
- $ cpan Pod::Usage Data::Dumper Getopt::Long Digest::MD5 Statistics::Descriptive Time::Progress Text::CSV_XS JSON JSON::XS SVG GD::SVG Devel::CheckLib Compress::LZ4
+ $ cpan Carp Pod::Usage Data::Dumper Getopt::Long Digest::MD5 Statistics::Descriptive Time::Progress Text::CSV_XS JSON JSON::XS SVG GD::SVG Devel::CheckLib Compress::LZ4
 
 
 Then just run 
