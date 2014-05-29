@@ -245,6 +245,9 @@ TMM_normalize = function(targetsFile, minCPM = 2,minLibs = 1,outfile=NULL) {
 	
 	# run TMM normalization
 	edgeR_obj = calcNormFactors(edgeR_obj)
+	#TODO if we have spike-ins, we should have a special case, either by updating $samples$norm.factors or (perhaps better) 
+	# by doing the TMM_normalize using the spike ins only to produce edgeR/TMM_info.txt
+	
 	rownames(edgeR_obj$samples)<-edgeR_obj$samples$description
 	colnames(edgeR_obj$counts)<-edgeR_obj$samples$description
 	
@@ -263,33 +266,37 @@ TMM_normalize = function(targetsFile, minCPM = 2,minLibs = 1,outfile=NULL) {
 
 
 print_statistics_normalized = function(statsfile){
-	require(ggplot2,quietly=T,warn.conflicts=F)
+	library(ggplot2,quietly=T,warn.conflicts=F,verbose=F)
 	data<-read.table(file=statsfile,header=T,sep="\t");
-	#counts
-	p_r_counts<-ggplot(data,aes(x=Raw_Counts,fill=Readset)) + geom_density(alpha=.3)
-	p_e_counts<-ggplot(data,aes(x=Express_eff.counts,fill=Readset)) + geom_density(alpha=.3)
-	p_n_counts<-ggplot(data,aes(x=TMM_Normalized.count,fill=Readset)) + geom_density(alpha=.3) 
+	#info: adding limits: scale_x_continuous(limits = c(0, 50000))
+	#counts 
+	p_r_counts<-ggplot(data,aes(x=Raw_Counts,fill=Readset)) + geom_density(alpha=.3) + scale_x_continuous(limits = c(quantile(data$Raw_Counts,0.33), quantile(data$Raw_Counts,0.66)))
+	p_e_counts<-ggplot(data,aes(x=Express_eff.counts,fill=Readset)) + geom_density(alpha=.3) + scale_x_continuous(limits = c(quantile(data$Express_eff.counts,0.33), quantile(data$Express_eff.counts,0.66)))
+	p_n_counts<-ggplot(data,aes(x=TMM_Normalized.count,fill=Readset)) + geom_density(alpha=.3)  + scale_x_continuous(limits = c(quantile(data$TMM_Normalized.count,0.33), quantile(data$TMM_Normalized.count,0.66)))
 	fileout = paste(statsfile,'_counts.svg',sep='')
 	svg(file=fileout, width = 7, height = 10)
 	multiplot(p_r_counts,p_e_counts,p_n_counts,cols=1)
 	dev.off()
 	
 	#r/fpkm
-	p_rpkm<-ggplot(data,aes(x=RPKM,fill=Readset)) + geom_density(alpha=.3) 
-	p_e_fpkm<-ggplot(data,aes(x=Express_FPKM,fill=Readset)) + geom_density(alpha=.3) 
-	p_tmm_fpkm<-ggplot(data,aes(x=TMM.FPKM,fill=Readset)) + geom_density(alpha=.3) 
+	p_rpkm<-ggplot(data,aes(x=RPKM,fill=Readset)) + geom_density(alpha=.3) + scale_x_continuous(limits = c(quantile(data$RPKM,0.33), quantile(data$RPKM,0.66))) 
+	p_e_fpkm<-ggplot(data,aes(x=Express_FPKM,fill=Readset)) + geom_density(alpha=.3)  + scale_x_continuous(limits = c(quantile(data$Express_FPKM,0.33), quantile(data$Express_FPKM,0.66)))
+	p_tmm_fpkm<-ggplot(data,aes(x=TMM.FPKM,fill=Readset)) + geom_density(alpha=.3)  + scale_x_continuous(limits = c(quantile(data$TMM.FPKM,0.33), quantile(data$TMM.FPKM,0.66)))
 	fileout = paste(statsfile,'_fpkm.svg',sep='')
 	svg(file=fileout, width = 7, height = 10)
 	multiplot(p_rpkm,p_e_fpkm,p_tmm_fpkm,cols=1)
 	dev.off()
 	
 	#tpm
-	p_tmm_tpm<-ggplot(data,aes(x=TMM.TPM,fill=Readset)) + geom_density(alpha=.3)
-	p_e_tpm<-ggplot(data,aes(x=Express_TPM,fill=Readset)) + geom_density(alpha=.3)
+	p_tmm_tpm<-ggplot(data,aes(x=TMM.TPM,fill=Readset)) + geom_density(alpha=.3) + scale_x_continuous(limits = c(quantile(data$TMM.TPM,0.33), quantile(data$TMM.TPM,0.66)))
+	p_e_tpm<-ggplot(data,aes(x=Express_TPM,fill=Readset)) + geom_density(alpha=.3) + scale_x_continuous(limits = c(quantile(data$Express_TPM,0.33), quantile(data$Express_TPM,0.66)))
 	fileout = paste(statsfile,'_tpm.svg',sep='')
 	svg(file=fileout, width = 7, height = 10)
 	multiplot(p_e_tpm,p_tmm_tpm,cols=1)
 	dev.off()
+	
+	save.image(file=paste(statsfile,'.Rdata',sep=''))
+	
 }
 
 
@@ -583,7 +590,7 @@ edgeR_DE_postanalysis = function (aliases,edgeR_obj, edgeR_obj_de, baseout='tmp'
 }
 
 
-edgeR_gene_plots_all = function(genesaliases_file,matrixfile='tmp',outdir='./',do_png=FALSE,threads=5){
+edgeR_gene_plots_all = function(genesaliases_file,matrixfile='tmp',outdir='./',do_png=FALSE,threads=5,type='FPKM'){
 	require(ggplot2,quietly=T,warn.conflicts=F)
 	require(foreach,quietly=T,warn.conflicts=F)
 	require(doMC,quietly=T,warn.conflicts=F)
@@ -594,6 +601,7 @@ edgeR_gene_plots_all = function(genesaliases_file,matrixfile='tmp',outdir='./',d
 	gene_names <- convert_from_uid(aliases,rownames(data))
 	rownames(data)<-gene_names
 	sample_names <- colnames(data)
+	graph_title <- paste('log10( TMM-normalized ',type,' from eff. counts)',sep='')
 	
 	# transform data
 	#clustering.data <- as.matrix(log2(1+ordered.data)) 
@@ -611,7 +619,7 @@ edgeR_gene_plots_all = function(genesaliases_file,matrixfile='tmp',outdir='./',d
 	main_graph <- main_graph + coord_flip()
 	main_graph <- main_graph + stat_boxplot(geom ='errorbar',na.rm=T,alpha=0.3)
 	main_graph <- main_graph + geom_boxplot(outlier.size = 1,na.rm=T,color='grey',outlier.colour='grey')
-	main_graph <- main_graph + scale_y_log10(name=quote('log10( TMM-normalized FPKM from eff. counts)'))
+	main_graph <- main_graph + scale_y_log10(name=graph_title)
 	main_graph <- main_graph + scale_x_discrete(name=quote('Library'))
 	main_graph <- main_graph + theme(axis.title.y = element_text(size=17, colour = rgb(0,0,0)))
 	main_graph <- main_graph + theme(axis.title.x = element_text(size=10, colour=rgb(0,0,0)))
@@ -623,6 +631,7 @@ edgeR_gene_plots_all = function(genesaliases_file,matrixfile='tmp',outdir='./',d
 	registerDoMC(threads)
 	foreach(i=1:length(data[,1])) %dopar% {
 	#for (i in 1:length(data[,1])) {
+		gene_alias<-gene_names[i];
 		gene_uid<-aliases[which(aliases[,2] == gene_alias),1]
 		filename = paste(outdir,gene_uid,'_gene_expression',sep='')
 		#pdf(file=paste(outdir,gene_uid,'_gene_expression.pdf',sep=''))
@@ -634,15 +643,14 @@ edgeR_gene_plots_all = function(genesaliases_file,matrixfile='tmp',outdir='./',d
 			filename = paste(filename,'.svg',sep='')
 			svg(file=filename, width = 7, height = 10);
 		}
-		if (file.exists(filename)){
-			next
+		if (!file.exists(filename)){
+			d<-data.frame(val=as.numeric(data[i,]),cat=as.factor(sample_names))
+			print ( main_graph + ggtitle(gene_alias) + geom_point(data=d,aes(x=cat,y=val),colour = "red",size=3) )
+			dev.off()
 		}
-		gene_alias<-gene_names[i];
-		d<-data.frame(val=as.numeric(data[i,]),cat=as.factor(sample_names))
-		print ( main_graph + ggtitle(gene_alias) + geom_point(data=d,aes(x=cat,y=val),colour = "red",size=3) )
-		dev.off()
 	}  
 	rm(i,d)
+	save.image(file=paste(matrixfile,'.Rdata',sep=''))
 }
 
 edgeR_differential_expression = function(genesaliases_file,baseout='tmp',kclusters = 10){
