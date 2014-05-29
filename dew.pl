@@ -108,14 +108,14 @@ test times:
             -gene_graphs_only       => The opposite of above; only do enough work to get the gene depth/coverage graphs and then exit
             -no_js_graphs           => If producing edgeR graphs, then don't produce javascript based graphs.
             -contextual             => Complete realignment of all genes in order to run a correction of biases properly. Does not read/store data in the cache
-            -use_bwa                => Use BWA instead of Bowtie2
+            -use_bwa                => Use BWA instead of Bowtie2. Much slower.
             -isoforms               => Use eXpress to correct Illumina sequencing biases and transcript isofrm assignments. Increases runtime. Use -contextual for accuracy 
             -prepare_only           => Quit after post-processing readsets and writing initial DB
             -seeddb :s              => Initialize database using this database file (e.g. after -prepare_only)
-            -kanga                  => Use kanga instead of bowtie2 for alignments
+            -kanga                  => Use kanga instead of bowtie2 for alignments. It requires a LOT of memory (ca. 1Gb per million reads) and post-processing paired-end is much slower than bowtie  
             -existing_aln :s{1,}    => Use an existing bam file instead of doing a new alignment (must be read name sorted)
             -resume                 => Load existing data from database and do not reprocess existing readsets (good for adding new readsets even with contextual. NB assumes same FASTA input so DO NOT use if you changed the FASTA reference gene file)
-            -no_kangade|nokangade   => Do not use kangade to process pairwise libraries
+            -do_kangade|dokangade   => Use kangade to process pairwise libraries. Experimental
             -db_use_file            => Use file for SQL database rather than system memory (much slower but possible to analyze larger datasets)
             -dispersion             => For edgeR: if we have replicates, dispersion can be set to auto. otherwise set it to a float such as 0.1 (def)
             -fdr_cutof              => Cut off FDR for DE as float (0.001 def.)
@@ -124,7 +124,7 @@ test times:
             -binary_min_coverage :f => Minimum gene (length) coverage (0.00 ~ 1.00) for counting a gene as a expressed or not (def. 0.3)
             -binary_min_reads :i    => Minimum number of aligned reads for counting a gene as a expressed or not (def. 4)
             -never_skip             => Always process graph for gene/readset pair, regardless of cutoffs
-            -sort_memory_gb :i      => Per thread of max memory (in Gb) to use for sorting (def 10). Make sure this is less than the available/requested RAM
+            -sort_memory_gb :i      => Max memory (in Gb) to use for sorting (def 10). Make sure this is less than the available/requested RAM
             -remove_redund          => Remove redundant sequences (identical) in -infile
             -extra_options :s       => Extra options for e.g. express (give as "express:r-stranded;express:max-read-len 250", including the "quotes" ). Only express implemented currently
             -genomewide             => Your input provides all the genes of the genome, i.e. expecting to have all reads in the readset aligning. This influences eXpress only. Untested but probably needed for genomewide analyses that have readsets with large amount of non coding sequence (e.g. rDNA). Also stores data in database cache
@@ -134,7 +134,7 @@ test times:
             -no_check               => When re-starting, do not check database if every gene has been stored. Do not use if you're adding new genes or database was incomplete (it will crash later), but use if you're restarting and have lots of genes.
             -options_single :s      => Extra options  (on top of -extra_options). These will apply only on single-end readsets (given without a matching -2read); e.g. "express:r-stranded". Only Express supported currently
             -verbose                => Print on the screen any system commands that are run. Caution, that will produce a lot of output on the screen they are kept in the .log file anyway).
-
+            -no_pdf                 => Do not convert gene coverage/expression images to multi-page PDF. Otherwise, will print a PDF for every 500 genes per PDF (slow for large genomes & dozens of readsets) 
 
  Express options:
 
@@ -282,13 +282,13 @@ my (
      $use_kanga,         @use_existing_bam,   $overwrite_results,
      @readsets2,         $db_file,            $no_checks,
      $db_use_file,       $dbname,             $no_graphs,
-     $user_ref_sequence, $no_kangade,         $main_output_dir,
+     $user_ref_sequence, $do_kangade,         $main_output_dir,
      $use_bwa,           $prepare_input_only, @sample_overlays,
      $initial_db,        $resume,             $gene_graphs_only,
      %binary_table,      $never_skip,         $nobatch_express,
      $extra_options,     $genomewide,         $only_alignments,
      $options_single,    $no_js_graphs,       $do_png,
-     $no_pairwise,       $verbose
+     $no_pdf,            $no_pairwise,        $verbose
 );
 my $given_cmd = $0 . " " . join( " ", @ARGV );
 
@@ -327,7 +327,7 @@ GetOptions(
  'debug:i'               => \$debug,               # should not be used by users
  'verbose'               => \$verbose,
  'resume'                => \$resume,
- 'no_kangade|nokangade'  => \$no_kangade,
+ 'do_kangade|dokangade'  => \$do_kangade,
  'db_use_file'           => \$db_use_file,
  'gene_graphs_only'      => \$gene_graphs_only,
  'dispersion:s'          => \$edgeR_dispersion,    #auto for bio.reps
@@ -348,7 +348,8 @@ GetOptions(
  'no_js_graphs'               => \$no_js_graphs,
  'png_graphs'                 => \$do_png,
  'no_pairwise'                => \$no_pairwise,
- 'options_single:s'           => \$options_single
+ 'options_single:s'           => \$options_single,
+ 'no_pdf'                     => \$no_pdf,
 );
 
 die
@@ -361,7 +362,7 @@ $bunzip2_exec .= " -p$bunzip_threads " if $bunzip2_exec;
 ($bunzip2_exec) = &check_program('bzip2') if !$bunzip2_exec;
 
 $sort_memory = $sort_memory * 1024 * 1024 * 1024;
-
+my $sam_sort_memory = int($sort_memory / $threads); 
 my ( $extra_express, %single_end_readsets, $express_options_single );
 
 $uid = &get_uid_time('dew') unless $uid;
@@ -441,7 +442,7 @@ if ( !-s $counts_expression_level_matrix
 }
 else {
  print
-"Expression data already exists ($counts_expression_level_matrix). Will not reprocess.\n";
+"Expression data already exists ($counts_expression_level_matrix). Will not reprocess. Acquiring data from database...\n";
 
  # we need to get all the expression coverage data
  &get_all_expression_data();
@@ -496,9 +497,9 @@ if ($gene_graphs_only) {
 }
 
 &process_edgeR_graphs_overview( $effective_expression_level_matrix_TMM_tpm,
-                                $result_dir . '/gene_expression_tpm/' );
+                                $result_dir . '/gene_expression_tpm/','TPM' );
 &process_edgeR_graphs_overview( $effective_expression_level_matrix_TMM_fpkm,
-                                $result_dir . '/gene_expression_fpkm/' );
+                                $result_dir . '/gene_expression_fpkm/','FPKM' );
 
 &process_completion();
 
@@ -564,6 +565,8 @@ sub sqlite_init() {
  $db_file = $debug ? $cwd . "/$dbname.debug" : $cwd . "/$dbname";
  my $active_db_file = $db_use_file ? $db_file . '.active' : ':memory:';
  if ( !-s $db_file && $initial_db && $initial_db ne $db_file ) {
+  die "You asked for a seed database ($initial_db) but it doesn't exist!\n"
+    unless -s $initial_db;
   warn "Will use $initial_db as seed database\n";
   copy( $initial_db, $db_file );
  }
@@ -1159,7 +1162,7 @@ sub perform_checks_preliminary() {
   $kanga_exec   = $biokanga_exec . ' align';
  }
  else {
-  $no_kangade = 1;
+  undef($do_kangade);
  }
 
  if ( scalar(@readsets) < 2 ) {
@@ -1168,7 +1171,7 @@ sub perform_checks_preliminary() {
   $no_pairwise = 1;
  }
 
- $no_kangade = 1 if ($no_pairwise);
+ undef($do_kangade) if ($no_pairwise);
 
  $never_skip = 1 if $genomewide;
 
@@ -1711,7 +1714,7 @@ sub starts_alignments() {
   print "\n";
   &perform_kangade( $file_to_align, \%alignment_sam_files,
                     \%alignment_bam_files )
-    unless $no_kangade;
+    unless !$do_kangade;
  }
  else {
 
@@ -1775,7 +1778,7 @@ sub starts_alignments() {
   }
   &perform_kangade( $new_file_to_align, \%alignment_sam_files,
                     \%alignment_bam_files )
-    unless $no_kangade;
+    unless !$do_kangade;
  }
 }
 
@@ -1811,10 +1814,11 @@ sub prepare_alignment_from_existing() {
    unless -s "$alignment_bam_file.namesorted";
 
 #         &process_cmd("$samtools_exec view -h -o $alignment_sam_file.namesorted ".$use_existing_bam[$i]) unless -s "$alignment_sam_file.namesorted";
- &process_cmd(   "$samtools_exec sort -@ $threads -m $sort_memory "
+ &process_cmd(   "$samtools_exec sort -@ $threads -m $sam_sort_memory "
                . $use_existing_bam[$i]
-               . " $alnbase" )
+               . " $alnbase  2>/dev/null" )
    unless -s $alignment_bam_file;
+   
  &perform_correct_bias( $alignment_bam_file, $file_to_align, $readset,
                         $alignment_bam_file . '.namesorted' )
    if ($perform_bias_correction);
@@ -1833,12 +1837,14 @@ sub prepare_alignment() {
  my ( $alignment_bam_file, $alignment_sam_file ) =
    &perform_alignments( $file_to_align, $readset, $readset2 );
 
+ return ( $alignment_bam_file, $alignment_sam_file ) if $only_alignments;
+
  ( $alignment_bam_file, $rpkm_hashref, $eff_counts_hashref ) =
    &perform_correct_bias( $alignment_bam_file, $file_to_align, $readset,
                           $alignment_sam_file . '.namesorted' )
    if ($perform_bias_correction);
 
- return if $only_alignments;
+ 
 
  &process_alignments( $alignment_bam_file, $readset, $readset2 );
  return ( $alignment_bam_file, $alignment_sam_file );
@@ -1870,13 +1876,6 @@ sub perform_alignments() {
   return ( $bam, $sam );
  }
 
- # DB method
- # We don't really want to store the alignments, do we!?
- #my $alignment_exists = &sqlite_check_align($readset);
- #if ($alignment_exists) {
- #  &sqlite_get_align( $readset, $bam );
- #} else {
- #  modtime method
  if ($use_bwa) {
   unlink("$baseout.sai")
     if ( -s "$baseout.sai"
@@ -1909,7 +1908,7 @@ sub perform_alignments() {
   }
   confess "Could not produce SAM file for $readset\n" unless -s $sam;
   &process_cmd(
-"$samtools_exec view -S  -u $sam 2>/dev/null|$samtools_exec sort -@ $threads -m $sort_memory - $baseout"
+"$samtools_exec view -S -u $sam 2>/dev/null|$samtools_exec sort -@ $threads -m $sam_sort_memory - $baseout 2>/dev/null"
   ) unless -s $bam;
  }
  confess "Could not convert to BAM file for $readset\n" unless -s $bam;
@@ -2345,7 +2344,7 @@ sub align_bowtie2() {
 
    # NB --all is -a but --all is a bug
    &process_cmd(
-"$bowtie2_exec $qformat -a -q --threads $threads --rdg 6,5 --rfg 6,5 --score-min L,-0.6,-0.4 --no-discordant -X $fragment_max_length --no-mixed --no-unal -x $file_to_align -1 $readset -2 $readset2 -S $sam 2> $baseout.log"
+"$bowtie2_exec --reorder $qformat -a -q --threads $threads --rdg 6,5 --rfg 6,5 --score-min L,-0.6,-0.4 --no-discordant -X $fragment_max_length --no-mixed --no-unal -x $file_to_align -1 $readset -2 $readset2 -S $sam 2> $baseout.log"
    ) unless -s "$baseout.log";
   }
   else {
@@ -2361,25 +2360,39 @@ sub align_bowtie2() {
   if ( $read_format eq 'fastq' ) {
    my $qformat = '--' . &check_fastq_format($readset);
    &process_cmd(
-"$bowtie2_exec $qformat -a -q --rdg 6,5 --rfg 6,5 --score-min L,-0.6,-0.4 --no-unal --threads $threads -x $file_to_align -U $readset -S $sam 2> $baseout.log >/dev/null"
+"$bowtie2_exec --reorder $qformat -a -q --rdg 6,5 --rfg 6,5 --score-min L,-0.6,-0.4 --no-unal --threads $threads -x $file_to_align -U $readset -S $sam 2> $baseout.log >/dev/null"
    ) unless -s "$baseout.log";
   }
   else {
    &process_cmd(
-"$bamtools_exec convert -in $readset -format fastq | $bowtie2_exec -a --rdg 6,5 --rfg 6,5 --score-min L,-0.6,-0.4 --no-unal -q --threads $threads -x $file_to_align -U - -S $sam 2> $baseout.log"
+"$bamtools_exec convert -in $readset -format fastq | $bowtie2_exec --reorder -a --rdg 6,5 --rfg 6,5 --score-min L,-0.6,-0.4 --no-unal -q --threads $threads -x $file_to_align -U - -S $sam 2> $baseout.log"
    ) unless -s "$baseout.log";
   }
  }
  confess "Alignment for $file_to_align vs $readset failed\n" unless -s $sam;
- chdir($result_dir);
- link( fileparse($sam), fileparse($baseout) . ".sam.namesorted" );
- chdir("../");
+ # sometime bowtie2 doesn't actually sort them
+ &namesort_sam($sam);
+ #chdir($result_dir);
+ # link( fileparse($sam), fileparse($baseout) . ".sam.namesorted" );
+ #chdir("../");
+}
+
+
+sub namesort_sam(){
+ my $sam = shift;
+ confess unless $sam && -s $sam;
+ my $out = "$sam.namesorted";
+ return $out if -s $out;
+ &process_cmd("samtools view -H -S $sam > $out 2> /dev/null");
+ &process_cmd("samtools view -S $sam  2> /dev/null| sort -S $sort_memory -k1,1 -k3,3 -nk4,4 >> $out" );
+ 
+ return $out;
 }
 
 sub fix_check_kanga() {
 
  #	####temp!!! debug
- my $in = shift;
+ my $sam = shift;
 
  #	my $errors;
  #	confess unless $in && -s $in;
@@ -2402,10 +2415,9 @@ sub fix_check_kanga() {
  #	close IN;
  #	close OUT;
  #	unlink($in);
- &process_cmd(
-        "sort -T /tmp -S " . $sort_memory . "b -k1,1 -k3,3 -o $in.sorted $in" );
- unlink("$in");
- rename( "$in.sorted", $in );
+ &namesort_sam($sam);
+ unlink($sam);
+ rename( "$sam.namesorted", $sam );
 }
 
 sub align_kanga() {
@@ -2423,7 +2435,7 @@ sub align_kanga() {
  print " Done!                                   \n";
  if ( $read_format eq 'fastq' ) {
   if ( $readset =~ /\.bz2$/ ) {
-   confess "Kanga does not support .bz2 FASTQ files (only bz2).\n";
+   confess "Kanga does not support .bz2 FASTQ files (only gz).\n";
   }
   my $qformat =
     ( &check_fastq_format($readset) eq 'phred33' ) ? ' -g0 ' : ' -g1 ';
@@ -2434,13 +2446,13 @@ sub align_kanga() {
 #   &fix_check_kanga("$sam");
    unless ( -s "$sam.1" ) {
     &process_cmd(
-"$kanga_exec -I $file_to_align.kangax -m 0 $qformat -R 100 -N -r 5 -X -M 5 -i $readset -o $sam.1 -F $sam.1.log -T $threads -d 100 -D 800 -w $sam.sqlite -W $readset >/dev/null"
+"$kanga_exec -I $file_to_align.kangax -m 0 $qformat -R 100 -N -r 5 -X -M 5 -i $readset -o $sam.1 -F $sam.1.log -T $threads -w $sam.sqlite -W $readset >/dev/null"
     );
     &fix_check_kanga("$sam.1");
    }
    unless ( -s "$sam.2" ) {
     &process_cmd(
-"$kanga_exec -I $file_to_align.kangax -m 0 $qformat -R 100 -N -r 5 -X -M 5 -i $readset2 -o $sam.2 -F $sam.2.log -T $threads -d 100 -D 800 -w $sam.2.sqlite -W $readset2 >/dev/null"
+"$kanga_exec -I $file_to_align.kangax -m 0 $qformat -R 100 -N -r 5 -X -M 5 -i $readset2 -o $sam.2 -F $sam.2.log -T $threads  -w $sam.2.sqlite -W $readset2 >/dev/null"
     );
     &fix_check_kanga("$sam.2");
    }
@@ -2457,7 +2469,7 @@ sub align_kanga() {
    ## Single END:
    unless ( -s "$sam" ) {
     &process_cmd(
-"$kanga_exec -I $file_to_align.kangax -m 0 -q 0 -R 100 -r 5 -X -M 5 -i $readset -o $sam -F $sam.log -T $threads -d 100 -D 800 >/dev/null"
+"$kanga_exec -I $file_to_align.kangax -m 0 -q 0 -R 100 -N -r 5 -X -M 5 -i $readset -o $sam -F $sam.log -T $threads -w $sam.sqlite -W $readset >/dev/null"
     );
     &fix_check_kanga("$sam");
    }
@@ -2517,9 +2529,7 @@ sub align_bwa() {
   );
   unlink("$baseout.sai");
  }
- &process_cmd(   "sort -T /tmp -S "
-               . $sort_memory
-               . "b -k1,1 -k3,3 -o $sam.namesorted $sam " );
+ &namesort_sam($sam);
 }
 
 sub process_alignments($) {
@@ -2550,7 +2560,7 @@ sub process_alignments($) {
   next if ( $check && defined( $check->{'rpkm'} ) );
 
   my $rpkm = sprintf(
-                      "%.0f",
+                      "%.2f",
                       (
                         $data[2] / (
                               ( $data[1] / 1000 ) *
@@ -2639,7 +2649,7 @@ sub perform_correct_bias($$$) {
  $current_express_exec .= ' -B 2 ' unless $nobatch_express;
 
  $current_express_exec .= " $express_options_single "
-   if $single_end_readsets{$readset};
+   if $express_options_single && $single_end_readsets{$readset};
 
  if ($do_bias_correction) {
   if ( $readset_size < 20000000 ) {
@@ -2656,7 +2666,7 @@ sub perform_correct_bias($$$) {
   mkdir($express_dir) unless -d $express_dir;
   if ($use_bwa) {
    &process_cmd(
-"$samtools_exec sort -@ $threads -n -m $sort_memory $original_bam $namesorted_sam"
+"$samtools_exec sort -@ $threads -n -m $sam_sort_memory $original_bam $namesorted_sam 2>/dev/null"
    ) unless -s $namesorted_bam;
    if ($contextual_alignment) {
     &process_cmd(
@@ -2664,7 +2674,7 @@ sub perform_correct_bias($$$) {
     ) unless -s "$express_dir/results.xprs";
     sleep(30);
     &process_cmd(
-"$samtools_exec sort -@ $threads -m $sort_memory $express_dir/hits.1.samp.bam $express_bam_base"
+"$samtools_exec sort -@ $threads -m $sam_sort_memory $express_dir/hits.1.samp.bam $express_bam_base 2>/dev/null"
     ) unless -s "$express_bam_base.bam";
     rename( "$express_dir/results.xprs", $express_results );
     rename( "$express_dir/varcov.xprs",  $express_results . ".varcov" );
@@ -2706,7 +2716,7 @@ sub perform_correct_bias($$$) {
 
      #sort for express
      &process_cmd(
-"$samtools_exec view -F4 -o $tmp_sam_file $original_bam '$id'  |sort -k1  >>$tmp_sam_file  "
+"$samtools_exec view -F4 -o $tmp_sam_file $original_bam '$id'  |sort -S $sort_memory -k1  >>$tmp_sam_file  "
      );
      if ( -s $tmp_sam_file < 200 ) {
       warn "No alignments for $id. Skipping\n" if $debug;
@@ -2755,7 +2765,7 @@ sub perform_correct_bias($$$) {
        unless -s "$express_dir/results.xprs";
      sleep(30);
      &process_cmd(
-"$samtools_exec view -u $express_dir/hits.1.samp.bam | $samtools_exec sort -@ $threads -m $sort_memory - $express_bam_base"
+"$samtools_exec view -u $express_dir/hits.1.samp.bam | $samtools_exec sort -@ $threads -m $sam_sort_memory - $express_bam_base 2>/dev/null"
      ) unless -s "$express_bam_base.bam";
     }
     elsif ( -s $namesorted_sam ) {
@@ -2766,7 +2776,7 @@ sub perform_correct_bias($$$) {
        unless -s "$express_dir/results.xprs";
      sleep(30);
      &process_cmd(
-"$samtools_exec view -S -u $express_dir/hits.1.samp.sam | $samtools_exec sort -@ $threads -m $sort_memory - $express_bam_base"
+"$samtools_exec view -S -u $express_dir/hits.1.samp.sam | $samtools_exec sort -@ $threads -m $sam_sort_memory - $express_bam_base 2>/dev/null"
      ) unless -s "$express_bam_base.bam";
     }
     rename( "$express_dir/results.xprs", $express_results );
@@ -2808,7 +2818,7 @@ sub perform_correct_bias($$$) {
 
      #sort for express
      &process_cmd(
-       "$samtools_exec view -F4 $original_bam '$id' |sort -k1  >>$tmp_sam_file "
+       "$samtools_exec view -F4 $original_bam '$id' |sort -S $sort_memory -k1  >>$tmp_sam_file "
      );
      if ( !-s $tmp_sam_file || -s $tmp_sam_file < 200 ) {
       warn "No alignments for $id. Skipping\n" if $debug;
@@ -2852,17 +2862,10 @@ sub perform_correct_bias($$$) {
   &remove_tree($express_dir) unless $debug;
   if ($contextual_alignment) {
 
-   # if debug or small (50mb) bam file, keep it
-   if ( $debug || -s $original_bam < 50048576 ) {
-    unlink( $original_bam . '.orig.bai' ) if -s $original_bam . ".bai";
-    unlink( $original_bam . '.orig' ) if -s $original_bam;
-    rename( $original_bam,          $original_bam . '.orig' );
-    rename( $original_bam . ".bai", $original_bam . '.orig.bai' );
-   }
-   else {
-    unlink($original_bam);
-    unlink( $original_bam . ".bai" );
-   }
+   unlink( $original_bam . '.orig.bai' ) if -s $original_bam . ".bai";
+   unlink( $original_bam . '.orig' ) if -s $original_bam;
+   rename( $original_bam,          $original_bam . '.orig' );
+   rename( $original_bam . ".bai", $original_bam . '.orig.bai' );
    chdir($result_dir);
    link( fileparse($express_bam), fileparse($original_bam) );
    &process_cmd( "$samtools_exec index " . fileparse($original_bam) );
@@ -3074,6 +3077,7 @@ sub make_coverage_graph($$$) {
   my $expression_statistics_ref = $ref->{'expression'};
   confess "Cannot find any coverage statistics for $seq_id vs $readset !\n"
     unless $expression_statistics_ref;
+    
   my $mean =
     $expression_statistics_ref->{'mean_hits'}
     ? int( $expression_statistics_ref->{'mean_hits'} )
@@ -3113,6 +3117,7 @@ sub make_coverage_graph($$$) {
 " Effective FPKM: $express_fpkm Eff.TPM: $express_tpm Eff.counts: $effective_counts "
     if $expression_statistics_ref->{'express_fpkm'};
   my $hit_max = $expression_statistics_ref->{'max_hits'};
+  
 
   my $readset_feature =
     Bio::SeqFeature::Generic->new(
@@ -3278,6 +3283,8 @@ sub process_main_stats($) {
 "$seq_md5hash\t$readset_name\t$seq_id\t$rpkm\t$hit_mean\t$hit_sd\t$hit_median\t$hit_max\t$total_hit_reads\t$coverage\n";
 
   if ( !$only_alignments ) {
+    $stats_ref =
+     &sqlite_get_expression_statistics( $seq_md5hash, $readsets[$i] );
    $expression_coverage_stats_hash{$seq_md5hash}{ $readsets[$i] } = {
                                           'median_hits' => $hit_median,
                                           'depth' => $depth_hash_ref_compressed,
@@ -3386,7 +3393,7 @@ sub process_expression_level() {
  print EFFECT_MATRIX $effective_matrix_print . "\n";
  foreach my $seq_id (@reference_sequence_list) {
   my $seq_md5hash = &sqlite_get_md5($seq_id);
-  
+
   next if !$seq_md5hash || $skipped_references{$seq_md5hash};
   $count_matrix_print     = $seq_md5hash . "\t";
   $effective_matrix_print = $seq_md5hash . "\t";
@@ -3395,7 +3402,8 @@ sub process_expression_level() {
    my $readset_name_C     = $readset_metadata_C->{'alias'};
    my $stats_ref_C =
      &sqlite_get_expression_statistics( $seq_md5hash, $readsets[$i] );
-     $stats_ref_C->{'total_hits'} = int(0) if !$stats_ref_C->{'total_hits'};
+   $stats_ref_C->{'total_hits'}   = int(0) if !$stats_ref_C->{'total_hits'};
+   $stats_ref_C->{'express_fpkm'} = int(0) if !$stats_ref_C->{'express_fpkm'};
    $stats_ref_C->{'express_eff_counts'} = int(0)
      if !$stats_ref_C->{'express_eff_counts'};
    $stats_ref_C->{'express_tpm'} = int(0)
@@ -3403,6 +3411,7 @@ sub process_expression_level() {
    $stats_ref_C->{'rpkm'} = int(0) if !$stats_ref_C->{'rpkm'};
    $stats_ref_C->{'kangade_counts'} = int(0)
      if !$stats_ref_C->{'kangade_counts'};
+
    $count_matrix_print .= $stats_ref_C->{'express_eff_counts'} . "\t";
    $effective_matrix_print .=
      sprintf( "%.2f", $stats_ref_C->{'express_tpm'} ) . "\t";
@@ -3425,6 +3434,7 @@ sub process_expression_level() {
      my $readset_name_E     = $readset_metadata_E->{'alias'};
      my $stats_ref_E =
        &sqlite_get_expression_statistics( $seq_md5hash, $readsets[$k] );
+     $stats_ref_E->{'total_hits'} = int(0) if !$stats_ref_E->{'total_hits'};
      $stats_ref_E->{'express_eff_counts'} = int(0)
        if !$stats_ref_E->{'express_eff_counts'};
      $stats_ref_E->{'express_fpkm'} = int(0)
@@ -3473,10 +3483,9 @@ sub process_expression_level() {
         : sprintf( "%.2f",
                    $stats_ref_C->{'express_eff_counts'} /
                      $stats_ref_E->{'express_eff_counts'} );
-      $add_express_fold_change->execute(
-                                $fpkm_ratio,  $eff_counts_ratio, $express_tpm_ratio,
-                                $seq_md5hash, $readsets[$i], $readsets[$k]
-      ) unless $contextual_alignment;
+      $add_express_fold_change->execute( $fpkm_ratio, $eff_counts_ratio,
+                $express_tpm_ratio, $seq_md5hash, $readsets[$i], $readsets[$k] )
+        unless $contextual_alignment;
       print STATS_RATIO $seq_md5hash . "\t" 
         . $seq_id . "\t"
         . $readset_name_C . "\t"
@@ -3621,7 +3630,7 @@ sub perform_TMM_normalization_edgeR() {
  my $TMM_file    = $edgeR_dir . 'TMM_info.txt';
 
 # AP: accounting for groups (column 2 [1] in target.files and TMM_info.txt files)
- my ( $effective_TMM_matrix_file );
+ my ($effective_TMM_matrix_file);
  unless ( -s $TMM_file ) {
 
   # just make some files that point out where the data are...
@@ -3698,8 +3707,9 @@ sub perform_edgeR_pairwise() {
 
 sub process_edgeR_graphs_overview() {
  my $norm_matrix_file = shift;
- return if -f "$norm_matrix_file.per_gene_plots.complete";
  my $plot_dir = shift;
+ my $type = shift;
+ return if -f "$norm_matrix_file.per_gene_plots.complete";
  mkdir($plot_dir) unless -d $plot_dir;
  print &mytime()
    . "Producing expression graphs for each gene. This can take up to a minute per gene\n";
@@ -3710,7 +3720,7 @@ sub process_edgeR_graphs_overview() {
 
  my $do_png_R = $do_png ? 'TRUE' : 'FALSE';
  my $gene_plots_cmd =
-"edgeR_gene_plots_all('$md5_aliases_file','$norm_matrix_file','$plot_dir',$do_png_R,$threads)";
+"edgeR_gene_plots_all('$md5_aliases_file','$norm_matrix_file','$plot_dir',$do_png_R,$threads,'$type')";
 
  my $R_script = "$norm_matrix_file.R";
  open( OUTR, ">$R_script" ) or confess "Error, cannot write to $R_script. $!";
@@ -3718,7 +3728,6 @@ sub process_edgeR_graphs_overview() {
 source('$RealBin/R/dew_funcs.R')
 $gene_plots_cmd
     ";
- print OUTR "save.image(file='$norm_matrix_file.Rdata');\n" if $debug;
  close OUTR;
 
  if ( !-s "$R_script.log" || -s "$R_script.err" > 50 ) {
@@ -4335,24 +4344,23 @@ sub write_normalized_effective_file {
      or confess "Error, no eff lib size for $readset_name";
    my $frag_count           = $data[$i];
    my $transcript_abundance = ( $frag_count * $readlength_median ) / $seq_len;
-   $transcript_abundance = sprintf( "%.4f", $transcript_abundance );
    $tpm_readsets{$readset_name}{'gene_number'}++;
    $tpm_readsets{$readset_name}{'sum_tpm'} += $transcript_abundance;
   }
  }
  close IN;
- print LOG "Average transcript abundances for each readset:\n";
- foreach my $readset ( keys %tpm_readsets ) {
-  $tpm_readsets{$readset}{'average_tpm'} =
-    sprintf( "%.4f",
-             $tpm_readsets{$readset}{'sum_tpm'} /
-               $tpm_readsets{$readset}{'gene_number'} );
-  print LOG "$readset: Gene number:"
-    . $tpm_readsets{$readset}{'gene_number'}
-    . "Average:"
-    . $tpm_readsets{$readset}{'average_tpm'} . " SUM:"
-    . $tpm_readsets{$readset}{'sum_tpm'} . " \n";
- }
+# print LOG "Average transcript abundances for each readset:\n";
+# foreach my $readset ( keys %tpm_readsets ) {
+#  $tpm_readsets{$readset}{'average_tpm'} =
+#    sprintf( "%.4f",
+#             $tpm_readsets{$readset}{'sum_tpm'} /
+#               $tpm_readsets{$readset}{'gene_number'} );
+#  print LOG "$readset: Gene number:"
+#    . $tpm_readsets{$readset}{'gene_number'}
+#    . "Average:"
+#    . $tpm_readsets{$readset}{'average_tpm'} . " SUM:"
+#    . $tpm_readsets{$readset}{'sum_tpm'} . " \n";
+# }
 
  # and reopen
  open( IN, $matrix_file ) || die($!);
@@ -4382,9 +4390,9 @@ sub write_normalized_effective_file {
    $fpkm = sprintf( "%.2f", $fpkm );
 
    my $transcript_abundance = ( $frag_count * $readlength_median ) / $seq_len;
-   my $tpm                  = sprintf( "%.2f",
-                      ( $transcript_abundance * 1e6 ) /
-                        $tpm_readsets{$readset_name}{'sum_tpm'} );
+   my $tpm                  = ( $transcript_abundance * 1e6 ) / $tpm_readsets{$readset_name}{'sum_tpm'};
+   $tpm = sprintf( "%.2f",$tpm);
+   
    $print1 .= "\t$fpkm";
    $print2 .= "\t$tpm";
    $TMM_hash{$gene}{$readset_name}{'norm_frag_count'} = $norm_frag_count;
@@ -4411,11 +4419,12 @@ sub write_normalized_effective_file {
  my $header_S = <STATSIN>;
  my @headers = split( "\t", $header_S );
  if ( scalar(@headers) < 10 ) {
+
   # has not already been processed
   open( STATSOUT, ">$result_dir/$uid.expression_levels.stats.tsv.t" )
     || die($!);
   chomp($header_S);
-  print STATSOUT $header_S . "\tTMM_Normalized.count\tTMM FPKM\tTMM TPM\n";
+  print STATSOUT $header_S . "\tTMM_Normalized.count\tTMM.FPKM\tTMM.TPM\n";
   while ( my $ln = <STATSIN> ) {
    chomp($ln);
    my @data = split( "\t", $ln );
@@ -4431,8 +4440,7 @@ sub write_normalized_effective_file {
   rename( "$result_dir/$uid.expression_levels.stats.tsv.t",
           "$result_dir/$uid.expression_levels.stats.tsv" );
  }
- 
- 
+
  my $R_script = "$result_dir/$uid.expression_levels.stats.tsv.R";
  unless ( -s $R_script ) {
   open( OUTR, ">$R_script" ) or confess "Error, cannot write to $R_script. $!";
@@ -4440,7 +4448,6 @@ sub write_normalized_effective_file {
 source('$RealBin/R/dew_funcs.R')
 print_statistics_normalized('$result_dir/$uid.expression_levels.stats.tsv')
     ";
-  print OUTR "save.image(file='$result_dir/$uid.expression_levels.stats.tsv.Rdata');\n";
   close OUTR;
 
   if ( !-s "$R_script.log" || -s "$R_script.err" > 50 ) {
@@ -4449,7 +4456,6 @@ print_statistics_normalized('$result_dir/$uid.expression_levels.stats.tsv')
    );
   }
  }
- 
 
  open( STATSIN, "$result_dir/$uid.ratio.stats.tsv" ) || die($!);
  my $headerR = <STATSIN>;
@@ -4457,7 +4463,7 @@ print_statistics_normalized('$result_dir/$uid.expression_levels.stats.tsv')
  if ( scalar(@headers) < 11 ) {
   open( STATSOUT, ">$result_dir/$uid.ratio.stats.tsv.t" ) || die($!);
   chomp($headerR);
-  print STATSOUT $headerR . "\tTMM_Normalized.count\tTMM FPKM\tTMM TPM\n";
+  print STATSOUT $headerR . "\tTMM_Normalized.count\tTMM.FPKM\tTMM.TPM\n";
   while ( my $ln = <STATSIN> ) {
    chomp($ln);
    my @data = split( "\t", $ln );
@@ -4562,7 +4568,7 @@ sub rename_graph_files_md52gene() {
   symlink( "../" . $filename, $new_filename );
  }
  @files = ();
- if ( $convert_imagemagick_exec && -x $convert_imagemagick_exec ) {
+ if ( !$no_pdf && $convert_imagemagick_exec && -x $convert_imagemagick_exec ) {
   print &mytime . "Creating PDF for $dir using imagemagick\n";
   print LOG &mytime . "Creating PDF for $dir using imagemagick\n";
   chdir( $dir . "/gene_names" );
