@@ -2294,10 +2294,10 @@ sub get_readlength_median() {
  if ( $read_format eq 'fastq' ) {
   my @reads;
   if ( $file =~ /\.bz2/ ) {
-   @reads = `bunzip2 -kc $file | head -n 40000 `;
+   @reads = `bunzip2 -kc $file | head -n 400000 `;
   }
   else {
-   @reads = `head -n 40000 $file`;
+   @reads = `head -n 400000 $file`;
   }
   for ( my $i = 1 ; $i < @reads ; $i += 4 ) {
    my $seq = $reads[$i] || last;
@@ -2306,7 +2306,7 @@ sub get_readlength_median() {
   }
  }
  elsif ( $read_format eq 'bam' ) {
-  my @reads = `$samtools_exec view $file|head -n 10000 | cut -f 10`;
+  my @reads = `$samtools_exec view $file|head -n 100000 | cut -f 10`;
   foreach my $seq (@reads) {
    chomp($seq);
    push( @array, length($seq) );
@@ -3065,7 +3065,7 @@ sub make_coverage_graph($$$) {
           || $ref->{'total_reads'} < $binary_min_reads
           || !$ref->{'median_hits'}
           || $ref->{'median_hits'} == 0
-          || ( $median_cutoff && $ref->{'median_hits'} < $median_cutoff ) );
+          || ( $median_cutoff && $ref->{'median_hits'} && $ref->{'median_hits'} < $median_cutoff ) );
    $gene_has_been_printed_before++;
   }
  }
@@ -3684,24 +3684,27 @@ sub perform_edgeR_pairwise() {
 # this will now estimate differential expression using the counts for each group
  my @groups = sort keys %groups_readsets;
  print &mytime
-   . "Running pair-wise edgeR comparisons for "
+   . "Running multithreaded pairwise edgeR comparisons for "
    . scalar( keys %groups_readsets )
    . " groups...\n";
+   
  foreach my $g (@groups) {
   print "Group $g readsets: "
     . join( ", ", keys %{ $groups_readsets{$g} } ) . "\n";
  }
+ 
+ my $thread_helper = new Thread_helper($threads);
  for ( my $i = 0 ; $i < @groups - 1 ; $i++ ) {
-  print "\n" . &mytime . "\n";
   for ( my $k = $i + 1 ; $k < @groups ; $k++ ) {
    unless (
      -s $edgeR_dir . $groups[$i] . '_vs_' . $groups[$k] . ".edgeR.results.txt" )
    {
-    print $groups[$i] . " vs: " . $groups[$k] . "                          \r";
-    &run_edgeR( $groups[$i], $groups[$k] );
+    my $thread = threads->create( 'run_edgeR', $groups[$i],$groups[$k] );
+    $thread_helper->add_thread($thread);
    }
   }
  }
+ $thread_helper->wait_for_all_threads_to_complete();
  print "\n";
 }
 
@@ -3709,7 +3712,7 @@ sub process_edgeR_graphs_overview() {
  my $norm_matrix_file = shift;
  my $plot_dir = shift;
  my $type = shift;
- return if -f "$norm_matrix_file.per_gene_plots.complete";
+ return if -f "$norm_matrix_file.per_gene_plots.completed";
  mkdir($plot_dir) unless -d $plot_dir;
  print &mytime()
    . "Producing expression graphs for each gene. This can take up to a minute per gene\n";
@@ -3734,7 +3737,7 @@ $gene_plots_cmd
   &process_cmd(
 "R --no-restore --no-save --slave -f $R_script > $R_script.log 2>$R_script.err"
   );
-  system("touch $norm_matrix_file.per_gene_plots.complete");
+  system("touch $norm_matrix_file.per_gene_plots.completed");
   &get_figure_legend_effective_plots($plot_dir);
   &rename_graph_files_md52gene($plot_dir);
 
@@ -4258,6 +4261,7 @@ sub run_edgeR {
 #        local_stat<-test["Pr(>F)"][2,1];
  my ( $group_A, $group_B ) = @_;
  my $base        = $edgeR_dir . $group_A . '_vs_' . $group_B . ".edgeR";
+ print &mytime." Group $group_A vs: $group_B as $base                                       \r";
  my $R_script    = $base . "_run.R";
  my $target_file = $base . "_target.files";
 
@@ -4384,7 +4388,7 @@ sub write_normalized_effective_file {
      or confess "Error, no eff lib size for $readset_name";
    my $norm_factor     = $norm_factors{$readset_name};
    my $frag_count      = $data[$i];
-   my $norm_frag_count = $norm_factor * $frag_count;
+   my $norm_frag_count = sprintf( "%.2f",$norm_factor * $frag_count);
 
    my $fpkm = $frag_count / ( $seq_len / 1e3 ) / ( $eff_lib_size / 1e6 );
    $fpkm = sprintf( "%.2f", $fpkm );
