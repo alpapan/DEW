@@ -126,7 +126,7 @@ test times:
             -never_skip             => Always process graph for gene/readset pair, regardless of cutoffs
             -sort_memory_gb :i      => Max memory (in Gb) to use for sorting (def 10). Make sure this is less than the available/requested RAM
             -remove_redund          => Remove redundant sequences (identical) in -infile
-            -extra_options :s       => Extra options for e.g. express (give as "express:r-stranded;express:max-read-len 250", including the "quotes" ). Only express implemented currently
+            -extra_options :s       => Extra options for e.g. express, exclude any initial --dashes from the express options (eg give as "express:r-stranded;express:max-read-len 250" or "express:aux-param-file $PWD/align.all.params.xprs", including the "quotes" ). Only express implemented currently
             -genomewide             => Your input provides all the genes of the genome, i.e. expecting to have all reads in the readset aligning. This influences eXpress only. Untested but probably needed for genomewide analyses that have readsets with large amount of non coding sequence (e.g. rDNA). Also stores data in database cache
             -only_alignments        => Stop after all alignments are completed. Good for large data/alignments and HPC environments. Use without -contextual (and use with -nographs). 
             -cleanup                => Delete alignments after successful completion
@@ -134,7 +134,8 @@ test times:
             -no_check               => When re-starting, do not check database if every gene has been stored. Do not use if you're adding new genes or database was incomplete (it will crash later), but use if you're restarting and have lots of genes.
             -options_single :s      => Extra options  (on top of -extra_options). These will apply only on single-end readsets (given without a matching -2read); e.g. "express:r-stranded". Only Express supported currently
             -verbose                => Print on the screen any system commands that are run. Caution, that will produce a lot of output on the screen they are kept in the .log file anyway).
-            -no_pdf                 => Do not convert gene coverage/expression images to multi-page PDF. Otherwise, will print a PDF for every 500 genes per PDF (slow for large genomes & dozens of readsets) 
+            -no_pdf                 => Do not convert gene coverage/expression images to multi-page PDF. Otherwise, will print a PDF for every 500 genes per PDF (slow for large genomes & dozens of readsets)
+            -express_min_bias :i    => Minimum number of reads (not fragments) before allowing express to undertake bias corrections (only if -isoform is used). Set it to 0 if you're using an external aux-param-file. Defaults to 10 million reads
 
  Express options:
 
@@ -276,7 +277,7 @@ my $median_cutoff          = 1;
 my $binary_min_coverage    = 0.3;
 my $binary_min_reads       = 4;
 my $sort_memory            = 10;
-
+my $express_min_bias = 10*10^6;
 my (
      $uid,               $lib_alias_file,     $demand_all_readsets,
      $use_kanga,         @use_existing_bam,   $overwrite_results,
@@ -350,6 +351,7 @@ GetOptions(
  'no_pairwise'                => \$no_pairwise,
  'options_single:s'           => \$options_single,
  'no_pdf'                     => \$no_pdf,
+ 'express_min_bias:i'         => \$express_min_bias
 );
 
 die
@@ -852,12 +854,12 @@ sub sqlite_destroy() {
  $update_rpkm_expression_statistics->finish();
  $get_raw_fold_change->finish();
 
- if ( $contextual_alignment && !$debug ) {
-
+ if ( $contextual_alignment && !$genomewide && !$debug ) {
+  print "Contextual non-genomewide alignment was requested, I will delete the tmp directories from the database\n";
   #empty temporary tables and re-create their schema
   $dbh->do("DROP TABLE expression_statistics_tmp");
   $dbh->do(
-"CREATE TABLE expression_statistics_tmp (seq_md5hash char(32), readset_id integer, mean_hits REAL, no_coverage integer, rpkm integer, mean_reads REAL, median_hits integer, total_hits integer, max_hits integer, hit_sd REAL, express_fpkm integer, express_eff_counts REAL, kangade_counts integer)"
+"CREATE TABLE expression_statistics_tmp (seq_md5hash char(32), readset_id integer, mean_hits REAL, no_coverage integer, rpkm integer, mean_reads REAL, median_hits integer, total_hits integer, max_hits integer, hit_sd REAL, express_fpkm integer, express_eff_counts REAL, express_tpm REAL , kangade_counts integer)"
   );
   $dbh->do(
 "CREATE UNIQUE INDEX expression_statistics_tmp_idx1 ON expression_statistics_tmp(seq_md5hash,readset_id)"
@@ -867,6 +869,7 @@ sub sqlite_destroy() {
 "CREATE TABLE depth_tmp (seq_md5hash char(32), readset_id integer, data blob)"
   );
   $dbh->do("CREATE INDEX depth_tmp_idx1 ON depth_tmp(seq_md5hash,readset_id)");
+  $dbh->do("VACUUM");
  }
 
  #&sqlite_backup() unless $db_use_file;
@@ -1438,7 +1441,7 @@ sub prepare_input_data() {
      &perform_readset_metadata( $readsets[$i] );
   }
  }
- &sqlite_backup( 1, $db_file . '.counted_readsets.seed' ) unless $initial_db;
+ &sqlite_backup( 1, $db_file . '.counted_readsets.seed' ) unless $initial_db || -s $db_file . '.counted_readsets.seed';
 
  &sqlite_backup() if !$db_use_file && $do_backup;
  print "\n" . &mytime . "Preparing references...\n";
@@ -2384,7 +2387,9 @@ sub namesort_sam(){
  my $out = "$sam.namesorted";
  return $out if -s $out;
  &process_cmd("samtools view -H -S $sam > $out 2> /dev/null");
- &process_cmd("samtools view -S $sam  2> /dev/null| sort -S $sort_memory -k1,1 -k3,3 -nk4,4 >> $out" );
+ confess "Can't produce $out. Is it a SAM file?\n" unless -s $out;
+ my $sort_memory_sub = $sort_memory/3;
+ &process_cmd("samtools view -S $sam  2> /dev/null| sort -S $sort_memory_sub -nk4,4|sort -S $sort_memory_sub -s -k3,3|sort -S $sort_memory_sub -s -k1,1 >> $out" );
  
  return $out;
 }
@@ -2604,33 +2609,12 @@ sub process_express_bias() {
 }
 
 sub perform_correct_bias($$$) {
- print &mytime
-   . "eXpress: performing Illumina bias and transcript assignment corrections\n";
+ print &mytime   . "eXpress: performing Illumina bias and transcript assignment corrections\n";
  my $original_bam       = shift;
  my $fasta_file         = shift;
  my $readset            = shift;
  my $namesorted_sam     = shift;
- my $reads_that_aligned = `$samtools_exec view -F260 -c $original_bam`
-   if -s $original_bam;
- chomp($reads_that_aligned) if $reads_that_aligned;
- if ( !$reads_that_aligned ) {
-  confess "No reads aligned!";
-  return $original_bam;
- }
-
-# if we are to allow express to do bias-correction then we need at least 200 genes with enough reads (fragments)
- my $do_bias_correction =
-   ( scalar(@reference_sequence_list) >= 200 && $reads_that_aligned >= 100000 )
-   ? 1
-   : 0;
- my $readset_metadata = &sqlite_get_readset_metadata($readset);
- my $readset_name     = $readset_metadata->{'alias'};
-
-# The library size is determined by the total number of reads in the readset
-# this is due to the need to support searches that are not genome wide
-# however i've seen pathological genome-wide datasets where only half of the
-# reads actually map to the genes... what to do then? implement -genomewide flag
- my $readset_size      = $readset_metadata->{'total_reads'};
+ 
  my $original_bam_base = fileparse($original_bam);
  my $namesorted_bam =
    ( $namesorted_sam =~ /\.bam.namesorted$/ )
@@ -2639,7 +2623,30 @@ sub perform_correct_bias($$$) {
  my $express_bam_base = $result_dir . $original_bam_base . ".express.sampled";
  my $express_bam      = $express_bam_base . '.bam';
  my $express_results  = $result_dir . $original_bam_base . ".express.results";
- my $express_dir      = $result_dir . "$readset_name.bias";
+ 
+ if (-s $express_results){
+   &process_express_bias( $express_results, $readset );
+   return $original_bam;
+ }
+ 
+ my $reads_that_aligned = `$samtools_exec view -F260 $original_bam|wc -l` if -s $original_bam;chomp($reads_that_aligned);
+ my $genes_that_aligned =  `$samtools_exec view -F260 $original_bam|cut -f 3 |sort -S $sort_memory -u|wc -l` if -s $original_bam;chomp($genes_that_aligned);
+ 
+ if ( !$reads_that_aligned ) {
+  confess "No reads aligned!";
+  return $original_bam;
+ }
+
+# if we are to allow express to do bias-correction then we need at least 200 genes with enough reads (fragments)
+ my $readset_metadata = &sqlite_get_readset_metadata($readset);
+ my $readset_name     = $readset_metadata->{'alias'};
+my $express_dir      = $result_dir . "$readset_name.bias";
+
+# The library size is determined by the total number of reads in the readset
+# this is due to the need to support searches that are not genome wide
+# however i've seen pathological genome-wide datasets where only half of the
+# reads actually map to the genes... what to do then? implement -genomewide flag
+ my $readset_size      = $readset_metadata->{'total_reads'};
 
 # todo get readset distribution from data if genomewide? nah: express does it automatically
  my $current_express_exec =
@@ -2651,13 +2658,10 @@ sub perform_correct_bias($$$) {
  $current_express_exec .= " $express_options_single "
    if $express_options_single && $single_end_readsets{$readset};
 
- if ($do_bias_correction) {
-  if ( $readset_size < 20000000 ) {
-   warn
-"Read set size is less than 20M reads ($readset_size), express will not perform bias correction\n";
+ if ($genes_that_aligned < 200 || $readset_size < $express_min_bias ) {
+   warn "Read set size is less than $express_min_bias reads or 200 genes, express will not perform bias correction\n";
    $current_express_exec .= ' --no-bias-correct ';
   }
- }
  else {
   $current_express_exec .= ' --no-bias-correct ';
  }
