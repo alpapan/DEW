@@ -1241,13 +1241,13 @@ sub perform_checks_preliminary() {
  unless ($debug) {
   print "Checking for R installations\n";
   system(
-'R --slave --no-restore --no-save -e \'source("~/workspace/dew/R/dew_funcs.R");dew_install();\'  2> R.err'
+'R --slave --no-restore --no-save -e \'source("$RealBin/R/dew_funcs.R");dew_install();\'  2> R.err'
   );
   my @error_check = `grep -i 'there is no package called' R.err`;
   if (@error_check) {
    undef(@error_check);
    system(
-'R --slave --no-restore --no-save -e \'source("~/workspace/dew/R/dew_funcs.R");dew_install();\'  2> R.err'
+'R --slave --no-restore --no-save -e \'source("$RealBin/R/dew_funcs.R");dew_install();\'  2> R.err'
    );
    @error_check = `grep -i 'there is no package called' R.err`;
    confess "Some R packages are not installed:\n" . join( '', @error_check )
@@ -1323,6 +1323,7 @@ sub prepare_library_alias() {
   my ($group_exists);
   chomp($header);
   my @headers = split( "\t", $header );
+  my $original_header_number = scalar(@headers);
   die
 "Library alias ($lib_alias_file) must have 'file' and 'name' as the first two columns."
     . " The other columns are free to be any kind of metadata."
@@ -1342,6 +1343,9 @@ sub prepare_library_alias() {
    chomp($ln);
    my @data = split( "\t", $ln );
    next unless $data[0];
+   die "Peculiar lib_alias file: number of headers ($original_header_number) does not equal no. of data (".scalar(@data).") at line:\n$ln\n"
+    unless scalar(@data) == $original_header_number;
+   
    if ( !-s $data[0] && $paired_readset_lookup{ $data[0] } ) {
     confess "Cannot find file " . $data[0] . "\n";
    }
@@ -2388,7 +2392,7 @@ sub namesort_sam(){
  return $out if -s $out;
  &process_cmd("samtools view -H -S $sam > $out 2> /dev/null");
  confess "Can't produce $out. Is it a SAM file?\n" unless -s $out;
- my $sort_memory_sub = $sort_memory/3;
+ my $sort_memory_sub = int($sort_memory/3).'b';
  &process_cmd("samtools view -S $sam  2> /dev/null| sort -S $sort_memory_sub -nk4,4|sort -S $sort_memory_sub -s -k3,3|sort -S $sort_memory_sub -s -k1,1 >> $out" );
  
  return $out;
@@ -2662,9 +2666,6 @@ my $express_dir      = $result_dir . "$readset_name.bias";
    warn "Read set size is less than $express_min_bias reads or 200 genes, express will not perform bias correction\n";
    $current_express_exec .= ' --no-bias-correct ';
   }
- else {
-  $current_express_exec .= ' --no-bias-correct ';
- }
 
  unless ( -s $express_results ) {
   mkdir($express_dir) unless -d $express_dir;
