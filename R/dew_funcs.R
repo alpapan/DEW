@@ -274,7 +274,7 @@ print_statistics_normalized = function(statsfile){
 	p_e_counts<-ggplot(data,aes(x=Express_eff.counts,fill=Readset)) + geom_density(alpha=.3) + scale_x_continuous(limits = c(quantile(data$Express_eff.counts,0.33), quantile(data$Express_eff.counts,0.66)))
 	p_n_counts<-ggplot(data,aes(x=TMM_Normalized.count,fill=Readset)) + geom_density(alpha=.3)  + scale_x_continuous(limits = c(quantile(data$TMM_Normalized.count,0.33), quantile(data$TMM_Normalized.count,0.66)))
 	fileout = paste(statsfile,'_counts.svg',sep='')
-	svg(file=fileout, width = 7, height = 10)
+	svg(file=fileout, width = 10, height = 10)
 	multiplot(p_r_counts,p_e_counts,p_n_counts,cols=1)
 	dev.off()
 	
@@ -283,7 +283,7 @@ print_statistics_normalized = function(statsfile){
 	p_e_fpkm<-ggplot(data,aes(x=Express_FPKM,fill=Readset)) + geom_density(alpha=.3)  + scale_x_continuous(limits = c(quantile(data$Express_FPKM,0.33), quantile(data$Express_FPKM,0.66)))
 	p_tmm_fpkm<-ggplot(data,aes(x=TMM.FPKM,fill=Readset)) + geom_density(alpha=.3)  + scale_x_continuous(limits = c(quantile(data$TMM.FPKM,0.33), quantile(data$TMM.FPKM,0.66)))
 	fileout = paste(statsfile,'_fpkm.svg',sep='')
-	svg(file=fileout, width = 7, height = 10)
+	svg(file=fileout, width = 10, height = 10)
 	multiplot(p_rpkm,p_e_fpkm,p_tmm_fpkm,cols=1)
 	dev.off()
 	
@@ -291,7 +291,7 @@ print_statistics_normalized = function(statsfile){
 	p_tmm_tpm<-ggplot(data,aes(x=TMM.TPM,fill=Readset)) + geom_density(alpha=.3) + scale_x_continuous(limits = c(quantile(data$TMM.TPM,0.33), quantile(data$TMM.TPM,0.66)))
 	p_e_tpm<-ggplot(data,aes(x=Express_TPM,fill=Readset)) + geom_density(alpha=.3) + scale_x_continuous(limits = c(quantile(data$Express_TPM,0.33), quantile(data$Express_TPM,0.66)))
 	fileout = paste(statsfile,'_tpm.svg',sep='')
-	svg(file=fileout, width = 7, height = 10)
+	svg(file=fileout, width = 10, height = 10)
 	multiplot(p_e_tpm,p_tmm_tpm,cols=1)
 	dev.off()
 	
@@ -476,7 +476,7 @@ edgeR_DE_postanalysis = function (aliases,edgeR_obj, edgeR_obj_de, baseout='tmp'
 	#detags_alias <- convert_from_uid(aliases,detags_names) 
 	
 	
-	svg(file=paste(baseout,'.svg',sep=''))
+	svg(file=paste(baseout,'.svg',sep=''), width = 10, height = 10)
 	plotSmear(edgeR_obj, de.tags=detags_names)
 	abline(h=c(-1,1), col="blue")
 	dev.off()
@@ -565,7 +565,7 @@ edgeR_DE_postanalysis = function (aliases,edgeR_obj, edgeR_obj_de, baseout='tmp'
 	
 	# heatmap
 	cat ("Producing info for heatmap and other graphs...\n")
-	svg(file=paste(baseout,'.heatmap.svg',sep=''), horizontal=FALSE, width=8, height=18)
+	svg(file=paste(baseout,'.heatmap.svg',sep=''), horizontal=FALSE, width=10, height=18)
 	figure.heatmap1<-heatmap.2(clustering.data, dendrogram="both", Rowv=as.dendrogram(hc_genes), Colv=as.dendrogram(hc_samples), col=myheatcol, RowSideColors=gene_colors,
 			scale="none", density.info="none", trace="none", key=TRUE, keysize=1.2, cexCol=2.5, margins=c(15,15), lhei=c(0.4,2), lwid=c(2.5,4))
 	dev.off();
@@ -637,13 +637,16 @@ edgeR_gene_plots_all = function(genesaliases_file,matrixfile='tmp',outdir='./',d
 		#pdf(file=paste(outdir,gene_uid,'_gene_expression.pdf',sep=''))
 		# unlike pdf, svg uses cairo so may not be supported; also it can only print 1 page, not multple pages
 		if (do_png == TRUE){
-			filename = paste(filename,'.png',sep='')
-			png(file=filename, width = 1200, height = 800)
+				filename = paste(filename,'.png',sep='')
 		}else{
-			filename = paste(filename,'.svg',sep='')
-			svg(file=filename, width = 7, height = 10);
+				filename = paste(filename,'.svg',sep='')
 		}
 		if (!file.exists(filename)){
+			if (do_png == TRUE){
+				png(file=filename, width = 1200, height = 800)
+			}else{
+				svg(file=filename, width = 10, height = 10);
+			}
 			d<-data.frame(val=as.numeric(data[i,]),cat=as.factor(sample_names))
 			print ( main_graph + ggtitle(gene_alias) + geom_point(data=d,aes(x=cat,y=val),colour = "red",size=3) )
 			dev.off()
@@ -710,7 +713,7 @@ edgeR_differential_expression = function(genesaliases_file,baseout='tmp',kcluste
 	gene_colors <- partition_colors[gene_partition_assignments]
 	
 	# heatmap
-	svg(file=paste(baseout,'.heatmap.svg',sep=''), horizontal=FALSE, width=8, height=18)
+	svg(file=paste(baseout,'.heatmap.svg',sep=''), horizontal=FALSE, width=10, height=18)
 	figure.heatmap1<-heatmap.2(clustering.data, dendrogram="both", Rowv=as.dendrogram(hc_genes), Colv=as.dendrogram(hc_samples), col=myheatcol, RowSideColors=gene_colors, scale="none", density.info="none", trace="none", key=TRUE, keysize=1.2, cexCol=2.5, margins=c(15,15), lhei=c(0.4,2), lwid=c(2.5,4))
 	dev.off();
 	
