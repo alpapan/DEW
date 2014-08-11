@@ -1225,7 +1225,7 @@ sub perform_checks_preliminary() {
      . " provided\n";
   }
   elsif (@use_existing_bam) {
-   confess "Cannot find user-provided BAM file ("
+   confess "Cannot find user-provided BAM file $i ("
      . $use_existing_bam[$i]
      . ") number "
      . ( $i + 1 ) . " for "
@@ -2398,9 +2398,6 @@ sub align_bowtie2() {
  confess "Alignment for $file_to_align vs $readset failed\n" unless -s $sam;
  # sometime bowtie2 doesn't actually sort them
  &namesort_sam($sam);
- #chdir($result_dir);
- # link( fileparse($sam), fileparse($baseout) . ".sam.namesorted" );
- #chdir("../");
 }
 
 
@@ -2412,8 +2409,11 @@ sub namesort_sam(){
  &process_cmd("$samtools_exec view -H -S $sam > $out 2> /dev/null");
  confess "Can't produce $out. Is it a SAM file?\n" unless -s $out;
  &process_cmd("$samtools_exec view -S $sam  2> /dev/null| sort -S $sort_memory_sub -nk4,4|$sort_exec -S $sort_memory_sub -s -k3,3|$sort_exec -S $sort_memory_sub -s -k1,1 >> $out" );
- 
- return $out;
+ unlink($sam);
+ chdir($result_dir);
+ link( fileparse($out), fileparse($sam));
+ chdir("../");
+ return $sam;
 }
 
 sub fix_check_kanga() {
@@ -2443,8 +2443,6 @@ sub fix_check_kanga() {
  #	close OUT;
  #	unlink($in);
  &namesort_sam($sam);
- unlink($sam);
- rename( "$sam.namesorted", $sam );
 }
 
 sub align_kanga() {
