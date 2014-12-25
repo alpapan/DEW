@@ -113,8 +113,7 @@ test times:
             -prepare_only           => Quit after post-processing readsets and writing initial DB
             -seeddb :s              => Initialize database using this database file (e.g. after -prepare_only)
             -kanga                  => Use kanga instead of bowtie2 for alignments. It requires a LOT of memory (ca. 1Gb per million reads) and post-processing paired-end is much slower than bowtie  
-            -existing_aln :s{1,}    => Use an existing bam file instead of doing a new alignment (must be read name sorted - see option below)
-            -coord_existing         => Above existing alignments are co-ordinate sorted rather than read name sorted
+            -existing_aln :s{1,}    => Use an existing bam file instead of doing a new alignment (must be read name sorted)
             -resume                 => Load existing data from database and do not reprocess existing readsets (good for adding new readsets even with contextual. NB assumes same FASTA input so DO NOT use if you changed the FASTA reference gene file)
             -do_kangade|dokangade   => Use kangade to process pairwise libraries. Experimental
             -db_use_file            => Use file for SQL database rather than system memory (much slower but possible to analyze larger datasets)
@@ -132,7 +131,7 @@ test times:
             -only_alignments        => Stop after all alignments are completed. Good for large data/alignments and HPC environments. Use without -contextual (and use with -nographs). 
             -cleanup                => Delete alignments after successful completion
             -no_pairwise            => Do not do pairwise comparisons (kangade and edgeR)
-            -no_check               => When re-starting, do not check database if every gene has been stored. Do not use if you're adding new genes or database was incomplete (it will crash later), but use if you're restarting from the graphs step (after alignments have been parsed into DB) and have lots of genes.
+            -no_check               => When re-starting, do not check database if every gene has been stored. Do not use if you're adding new genes or database was incomplete (it will crash later), but use if you're restarting and have lots of genes.
             -options_single :s      => Extra options  (on top of -extra_options). These will apply only on single-end readsets (given without a matching -2read); e.g. "express:r-stranded". Only Express supported currently
             -verbose                => Print on the screen any system commands that are run. Caution, that will produce a lot of output on the screen they are kept in the .log file anyway).
             -no_pdf                 => Do not convert gene coverage/expression images to multi-page PDF. Otherwise, will print a PDF for every 500 genes per PDF (slow for large genomes & dozens of readsets)
@@ -289,9 +288,8 @@ my (
      $initial_db,        $resume,             $gene_graphs_only,
      %binary_table,      $never_skip,         $nobatch_express,
      $extra_options,     $genomewide,         $only_alignments,
-     $existing_bam_is_coordsorted,
      $options_single,    $no_js_graphs,       $do_png,
-     $no_pdf,            $no_pairwise,        $verbose, @aliases
+     $no_pdf,            $no_pairwise,        $verbose
 );
 my $given_cmd = $0 . " " . join( " ", @ARGV );
 
@@ -327,7 +325,6 @@ pod2usage $! unless GetOptions(
  'bwa'                       => \$use_bwa,
  'kanga'                     => \$use_kanga,
  'existing_aln:s{1,}'        => \@use_existing_bam,
- 'coord_existing'        => \$existing_bam_is_coordsorted,
  'debug:i'               => \$debug,               # should not be used by users
  'verbose'               => \$verbose,
  'resume'                => \$resume,
@@ -495,9 +492,6 @@ confess
 if ( !$no_pairwise ) {
  print
 "\nPreparing edgeR differential expression data and graphs, This may take a long time if you have a large number of groups (use -no_pairwise to not do that in the future)\n";
-#TODO: resolve this for threading
- @aliases = &sqlite_get_seq_aliases($seq_md5sum);
- @aliases = qw/none/ unless @aliases;
  &perform_edgeR_pairwise();
  &prepare_edgeR_graphs($effective_expression_level_matrix_TMM_tpm);
  my ( $html2d, $html3d ) =
@@ -1403,7 +1397,7 @@ sub prepare_library_alias() {
      $library_metadata_headers{ $headers[$i] }++;
     }
    }
-   if ( !$library_metadata{ $data[1] }{'group'} || $library_metadata{ $data[1] }{'group'} eq 'N/A') {
+   if ( !$library_metadata{ $data[1] }{'group'} ) {
     $library_metadata_headers{'group'}++;
     $library_metadata{ $data[1] }{'group'} = $data[1];
     $print .= join( "\t", @data ) . "\t" . $data[1] . "\n";
@@ -1450,13 +1444,6 @@ sub prepare_library_alias() {
  if ($print) {
   open( OUT, ">$result_dir/lib_alias.txt" );
   print OUT $print;
-  close OUT;
-  open( OUT, ">$result_dir/lib_alias.details" );
-  print OUT "#################Groups:\n";
-  print OUT Dumper \%groups_readsets;
-  print OUT "\n\n#################Library metadata:\n";
-  print OUT Dumper \%library_metadata;
-  print OUT "\n\n";
   close OUT;
  }
  @sample_overlays = sort keys %library_metadata_headers;
@@ -1839,8 +1826,6 @@ sub prepare_alignment_from_existing() {
  print LOG "\n" . &mytime
    . "Aligning: Using user-provided alignment for $readset_basename\n";
 
-
- if (!$existing_bam_is_coordsorted){
  # namesorted bam
  # hard link:
  link( $use_existing_bam[$i], "$alignment_bam_file.namesorted" )
@@ -1853,28 +1838,10 @@ sub prepare_alignment_from_existing() {
    . $use_existing_bam[$i]
    . " as $alignment_bam_file.namesorted\n"
    unless -s "$alignment_bam_file.namesorted";
-  &process_cmd(   "$samtools_exec sort -@ $samtools_threads -m $sam_sort_memory "               . $use_existing_bam[$i]               . " $alnbase  2>/dev/null" ) unless -s $alignment_bam_file;
- }else{
- # coord sorted
- # hard link:
- link( $use_existing_bam[$i], "$alignment_bam_file" )
-   unless -s "$alignment_bam_file";
- # in case hard link cannot occur:
- symlink( $use_existing_bam[$i], "$alignment_bam_file" )
-   unless -s "$alignment_bam_file";
- confess "Cannot link "
-   . $use_existing_bam[$i]
-   . " as $alignment_bam_file\n"
-   unless -s "$alignment_bam_file";
-  unless ( -s "$alignment_bam_file.namesorted"){
-    # samtools sort -f does'nt work with insuffiecient memory
-    &process_cmd(   "$samtools_exec sort -n -@ $samtools_threads -m $sam_sort_memory "
-               . $use_existing_bam[$i]
-               . " $alignment_bam_file.namesorted " );
-    rename("$alignment_bam_file.namesorted.bam","$alignment_bam_file.namesorted");
-  }
-  die "Cannot find $alignment_bam_file.namesorted \n" unless -s "$alignment_bam_file.namesorted";
- }
+
+#         &process_cmd("$samtools_exec view -h -o $alignment_sam_file.namesorted ".$use_existing_bam[$i]) unless -s "$alignment_sam_file.namesorted";
+ &process_cmd(   "$samtools_exec sort -@ $samtools_threads -m $sam_sort_memory "               . $use_existing_bam[$i]               . " $alnbase  2>/dev/null" )
+   unless -s $alignment_bam_file;
    
  &perform_correct_bias( $alignment_bam_file, $file_to_align, $readset,
                         $alignment_bam_file . '.namesorted' )
@@ -3609,7 +3576,7 @@ sub prepare_edgeR_graphs() {
  }
  close OUT;
  my $housekeeping_gene_list =
-   $edgeR_dir . "all.unchanged.comparisons_$comparisons.p095.list";
+   $edgeR_dir . "all.unchanged$comparisons.p095.list";
  foreach my $res (@edgeR_housekeeping) {
   next unless -s $res;
   $res =~ /(\w+)_vs_(\w+)/;
@@ -3642,7 +3609,7 @@ sub prepare_edgeR_graphs() {
 "No differentially expressed transcripts identified at cuttoffs: FDR p-value:$fdr_pval_cutoff, log2(fold-change):2\n\n";
  }
 
- &process_edgeR_graphs_differential($normalized_count_file,
+ &process_edgeR_graphs_differential( $normalized_count_file,
                                      \%edgeR_diff_expressed_genes );
 
  return ( \%edgeR_diff_expressed_genes, \%edgeR_housekeeping_genes );
@@ -3804,6 +3771,7 @@ $gene_plots_cmd
 }
 
 sub process_edgeR_graphs_differential() {
+
  my $normalized_count_file          = shift;
  my $edgeR_diff_expressed_genes_ref = shift;
  my $norm_matrix_file               = fileparse($normalized_count_file);
@@ -3848,7 +3816,7 @@ sub process_edgeR_graphs_differential() {
 }
 
 sub prepare_heatmap_for_canvas() {
- my ($title, $diff_expr_matrix, $data_file, $sample_file, $gene_file,
+ my ( $title, $diff_expr_matrix, $data_file, $sample_file, $gene_file,
       $hcsamples_newick, $hcgenes_newick )
    = @_;
  return unless $hcgenes_newick && -s $hcgenes_newick;
@@ -3920,6 +3888,9 @@ sub prepare_heatmap_for_canvas() {
   my $seq_md5sum = $for_json_array{'y'}{'vars'}->[$i];
 
   #  foreach my $seq_md5sum ( @{ $for_json_array{'y'}{'vars'} } ) {
+  my @aliases = &sqlite_get_seq_aliases($seq_md5sum);
+  @aliases = qw/none/ unless @aliases;
+
   #debug trial
   my $alias =
     $user_alias{$seq_md5sum} ? $user_alias{$seq_md5sum}{'id'} : $seq_md5sum;
@@ -4077,6 +4048,8 @@ sub prepare_scatter_for_canvas() {
    next unless $data[4];
    my $seq_md5sum = $data[0];
    $data[5] = log( $data[4] ) / -1;
+   my @aliases = &sqlite_get_seq_aliases($seq_md5sum);
+   @aliases = qw/none/ unless @aliases;
    my $alias =
      $user_alias{$seq_md5sum} ? $user_alias{$seq_md5sum}{'id'} : $seq_md5sum;
    push( @{ $for_json_array{'y'}{'vars'} },     $alias );
@@ -4311,7 +4284,7 @@ sub run_edgeR {
 #        m2<-update(m1,~.-as.factor(c(s1,s1,s1,s2,s2,s2)));
 #        test<-anova(m1,m2,test="F");
 #        local_stat<-test["Pr(>F)"][2,1];
- my ($group_A, $group_B ) = @_;
+ my ( $group_A, $group_B ) = @_;
  my $base        = $edgeR_dir . $group_A . '_vs_' . $group_B . ".edgeR";
  print &mytime." Group $group_A vs: $group_B as $base                                       \r";
  my $R_script    = $base . "_run.R";

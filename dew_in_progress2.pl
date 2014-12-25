@@ -291,7 +291,7 @@ my (
      $extra_options,     $genomewide,         $only_alignments,
      $existing_bam_is_coordsorted,
      $options_single,    $no_js_graphs,       $do_png,
-     $no_pdf,            $no_pairwise,        $verbose
+     $no_pdf,            $no_pairwise,        $verbose, @aliases
 );
 my $given_cmd = $0 . " " . join( " ", @ARGV );
 
@@ -495,6 +495,9 @@ confess
 if ( !$no_pairwise ) {
  print
 "\nPreparing edgeR differential expression data and graphs, This may take a long time if you have a large number of groups (use -no_pairwise to not do that in the future)\n";
+#TODO: resolve this for threading
+ @aliases = &sqlite_get_seq_aliases($seq_md5sum);
+ @aliases = qw/none/ unless @aliases;
  &perform_edgeR_pairwise();
  &prepare_edgeR_graphs($effective_expression_level_matrix_TMM_tpm);
  my ( $html2d, $html3d ) =
@@ -1288,7 +1291,7 @@ sub perform_checks_preliminary() {
   my @opt1 = split( ';', $extra_options );
   foreach my $op1 (@opt1) {
    my @opt2 = split( ':', $op1 );
-   $extra_express .= '--' . $opt2[1] if $opt2[0] eq 'express';
+   $extra_express .= ' --' . $opt2[1] if $opt2[0] eq 'express';
   }
   print "All data: Applying extra express options: $extra_express\n";
   print LOG "All data: Applying extra express options: $extra_express\n";
@@ -1297,7 +1300,7 @@ sub perform_checks_preliminary() {
   my @opt1 = split( ';', $options_single );
   foreach my $op1 (@opt1) {
    my @opt2 = split( ':', $op1 );
-   $express_options_single .= '--' . $opt2[1] if $opt2[0] eq 'express';
+   $express_options_single .= ' --' . $opt2[1] if $opt2[0] eq 'express';
   }
   print "SE data: Applying extra express options: $express_options_single\n";
   print LOG
@@ -1863,9 +1866,14 @@ sub prepare_alignment_from_existing() {
    . $use_existing_bam[$i]
    . " as $alignment_bam_file\n"
    unless -s "$alignment_bam_file";
-  &process_cmd(   "$samtools_exec sort -r -f -@ $samtools_threads -m $sam_sort_memory "
+  unless ( -s "$alignment_bam_file.namesorted"){
+    # samtools sort -f does'nt work with insuffiecient memory
+    &process_cmd(   "$samtools_exec sort -n -@ $samtools_threads -m $sam_sort_memory "
                . $use_existing_bam[$i]
-               . " $alignment_bam_file.namesorted  2>/dev/null" ) unless -s "$alignment_bam_file.namesorted";
+               . " $alignment_bam_file.namesorted " );
+    rename("$alignment_bam_file.namesorted.bam","$alignment_bam_file.namesorted");
+  }
+  die "Cannot find $alignment_bam_file.namesorted \n" unless -s "$alignment_bam_file.namesorted";
  }
    
  &perform_correct_bias( $alignment_bam_file, $file_to_align, $readset,
@@ -3601,7 +3609,7 @@ sub prepare_edgeR_graphs() {
  }
  close OUT;
  my $housekeeping_gene_list =
-   $edgeR_dir . "all.unchanged$comparisons.p095.list";
+   $edgeR_dir . "all.unchanged.comparisons_$comparisons.p095.list";
  foreach my $res (@edgeR_housekeeping) {
   next unless -s $res;
   $res =~ /(\w+)_vs_(\w+)/;
@@ -3634,7 +3642,7 @@ sub prepare_edgeR_graphs() {
 "No differentially expressed transcripts identified at cuttoffs: FDR p-value:$fdr_pval_cutoff, log2(fold-change):2\n\n";
  }
 
- &process_edgeR_graphs_differential( $normalized_count_file,
+ &process_edgeR_graphs_differential($normalized_count_file,
                                      \%edgeR_diff_expressed_genes );
 
  return ( \%edgeR_diff_expressed_genes, \%edgeR_housekeeping_genes );
@@ -3796,7 +3804,6 @@ $gene_plots_cmd
 }
 
 sub process_edgeR_graphs_differential() {
-
  my $normalized_count_file          = shift;
  my $edgeR_diff_expressed_genes_ref = shift;
  my $norm_matrix_file               = fileparse($normalized_count_file);
@@ -3841,7 +3848,7 @@ sub process_edgeR_graphs_differential() {
 }
 
 sub prepare_heatmap_for_canvas() {
- my ( $title, $diff_expr_matrix, $data_file, $sample_file, $gene_file,
+ my ($title, $diff_expr_matrix, $data_file, $sample_file, $gene_file,
       $hcsamples_newick, $hcgenes_newick )
    = @_;
  return unless $hcgenes_newick && -s $hcgenes_newick;
@@ -3913,9 +3920,6 @@ sub prepare_heatmap_for_canvas() {
   my $seq_md5sum = $for_json_array{'y'}{'vars'}->[$i];
 
   #  foreach my $seq_md5sum ( @{ $for_json_array{'y'}{'vars'} } ) {
-  my @aliases = &sqlite_get_seq_aliases($seq_md5sum);
-  @aliases = qw/none/ unless @aliases;
-
   #debug trial
   my $alias =
     $user_alias{$seq_md5sum} ? $user_alias{$seq_md5sum}{'id'} : $seq_md5sum;
@@ -4073,8 +4077,6 @@ sub prepare_scatter_for_canvas() {
    next unless $data[4];
    my $seq_md5sum = $data[0];
    $data[5] = log( $data[4] ) / -1;
-   my @aliases = &sqlite_get_seq_aliases($seq_md5sum);
-   @aliases = qw/none/ unless @aliases;
    my $alias =
      $user_alias{$seq_md5sum} ? $user_alias{$seq_md5sum}{'id'} : $seq_md5sum;
    push( @{ $for_json_array{'y'}{'vars'} },     $alias );
@@ -4301,9 +4303,6 @@ sub run_TMM {
 
 sub run_edgeR {
 
-
-die;
-
 #init. from b.haas
 # AP: this is running pair-wise for each dataset
 # %groups_readsets has key1 as group and then key2 as readset name and value is data filename
@@ -4312,7 +4311,7 @@ die;
 #        m2<-update(m1,~.-as.factor(c(s1,s1,s1,s2,s2,s2)));
 #        test<-anova(m1,m2,test="F");
 #        local_stat<-test["Pr(>F)"][2,1];
- my ( $group_A, $group_B ) = @_;
+ my ($group_A, $group_B ) = @_;
  my $base        = $edgeR_dir . $group_A . '_vs_' . $group_B . ".edgeR";
  print &mytime." Group $group_A vs: $group_B as $base                                       \r";
  my $R_script    = $base . "_run.R";
