@@ -565,7 +565,7 @@ edgeR_DE_postanalysis = function (aliases,edgeR_obj, edgeR_obj_de, baseout='tmp'
 	
 	# heatmap
 	cat ("Producing info for heatmap and other graphs...\n")
-	svg(file=paste(baseout,'.heatmap.svg',sep=''), horizontal=FALSE, width=10, height=18)
+	svg(file=paste(baseout,'.heatmap.svg',sep=''), width=10, height=18)
 	figure.heatmap1<-heatmap.2(clustering.data, dendrogram="both", Rowv=as.dendrogram(hc_genes), Colv=as.dendrogram(hc_samples), col=myheatcol, RowSideColors=gene_colors,
 			scale="none", density.info="none", trace="none", key=TRUE, keysize=1.2, cexCol=2.5, margins=c(15,15), lhei=c(0.4,2), lwid=c(2.5,4))
 	dev.off();
@@ -623,7 +623,7 @@ edgeR_gene_plots_all = function(genesaliases_file,matrixfile='tmp',outdir='./',d
 	main_graph <- main_graph + scale_x_discrete(name=quote('Library'))
 	main_graph <- main_graph + theme(axis.title.y = element_text(size=17, colour = rgb(0,0,0)))
 	main_graph <- main_graph + theme(axis.title.x = element_text(size=10, colour=rgb(0,0,0)))
-	main_graph <- main_graph + theme(axis.text.x = element_text(size=12, colour=rgb(0,0,0)))
+	main_graph <- main_graph + theme(axis.text.x = element_text(size=8, colour=rgb(0,0,0)))
 	main_graph <- main_graph + theme(axis.text.y = element_text(size=12, colour = rgb(0,0,0),vjust=0.5))
 	main_graph <- main_graph + theme(plot.title = element_text(lineheight=0.8, face=quote(bold)))
 
@@ -645,7 +645,7 @@ edgeR_gene_plots_all = function(genesaliases_file,matrixfile='tmp',outdir='./',d
 			if (do_png == TRUE){
 				png(file=filename, width = 1200, height = 800)
 			}else{
-				svg(file=filename, width = 10, height = 10);
+				svg(file=filename, width = 10, height = 15);
 			}
 			d<-data.frame(val=as.numeric(data[i,]),cat=as.factor(sample_names))
 			print ( main_graph + ggtitle(gene_alias) + geom_point(data=d,aes(x=cat,y=val),colour = "red",size=3) )
@@ -713,7 +713,7 @@ edgeR_differential_expression = function(genesaliases_file,baseout='tmp',kcluste
 	gene_colors <- partition_colors[gene_partition_assignments]
 	
 	# heatmap
-	svg(file=paste(baseout,'.heatmap.svg',sep=''), horizontal=FALSE, width=10, height=18)
+	svg(file=paste(baseout,'.heatmap.svg',sep=''), width=10, height=18)
 	figure.heatmap1<-heatmap.2(clustering.data, dendrogram="both", Rowv=as.dendrogram(hc_genes), Colv=as.dendrogram(hc_samples), col=myheatcol, RowSideColors=gene_colors, scale="none", density.info="none", trace="none", key=TRUE, keysize=1.2, cexCol=2.5, margins=c(15,15), lhei=c(0.4,2), lwid=c(2.5,4))
 	dev.off();
 	
