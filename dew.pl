@@ -126,7 +126,7 @@ test times:
             -never_skip             => Always process graph for gene/readset pair, regardless of cutoffs
             -sort_memory_gb :i      => Max memory (in Gb) to use for sorting (def 10). Make sure this is less than the available/requested RAM
             -remove_redund          => Remove redundant sequences (identical) in -infile
-            -extra_options :s       => Extra options for e.g. express, exclude any initial --dashes from the express options (eg give as "express:r-stranded;express:max-read-len 250" or "express:aux-param-file $PWD/align.all.params.xprs", including the "quotes" ). Only express implemented currently
+            -extra_options :s       => Extra options for e.g. express, exclude any initial --dashes from the express options (eg give as "express:rf-stranded;express:max-read-len 250" or "express:aux-param-file $PWD/align.all.params.xprs", including the "quotes" ). Only express implemented currently
             -genomewide             => Your input provides all the genes of the genome, i.e. expecting to have all reads in the readset aligning. This influences eXpress only. Untested but probably needed for genomewide analyses that have readsets with large amount of non coding sequence (e.g. rDNA). Also stores data in database cache
             -only_alignments        => Stop after all alignments are completed. Good for large data/alignments and HPC environments. Use without -contextual (and use with -nographs). 
             -cleanup                => Delete alignments after successful completion
