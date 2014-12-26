@@ -114,6 +114,7 @@ test times:
             -seeddb :s              => Initialize database using this database file (e.g. after -prepare_only)
             -kanga                  => Use kanga instead of bowtie2 for alignments. It requires a LOT of memory (ca. 1Gb per million reads) and post-processing paired-end is much slower than bowtie  
             -existing_aln :s{1,}    => Use an existing bam file instead of doing a new alignment (must be read name sorted)
+            -coord_existing         => Above existing alignments are co-ordinate sorted rather than read name sorted
             -resume                 => Load existing data from database and do not reprocess existing readsets (good for adding new readsets even with contextual. NB assumes same FASTA input so DO NOT use if you changed the FASTA reference gene file)
             -do_kangade|dokangade   => Use kangade to process pairwise libraries. Experimental
             -db_use_file            => Use file for SQL database rather than system memory (much slower but possible to analyze larger datasets)
@@ -241,7 +242,8 @@ my (
      %groups_readsets,         $cleanup,
      $md5_aliases_file,        $remove_redund,
      $kangade_exec,            $kangax_exec,
-     $kanga_exec
+     $existing_bam_is_coordsorted,
+     $kanga_exec, %gene_aliases_threads
 );
 
 my $db_hostname = 'localhost';
@@ -325,6 +327,7 @@ pod2usage $! unless GetOptions(
  'bwa'                       => \$use_bwa,
  'kanga'                     => \$use_kanga,
  'existing_aln:s{1,}'        => \@use_existing_bam,
+ 'coord_existing'        => \$existing_bam_is_coordsorted,
  'debug:i'               => \$debug,               # should not be used by users
  'verbose'               => \$verbose,
  'resume'                => \$resume,
@@ -989,6 +992,7 @@ sub sqlite_add_seq_md5($$$) {
   $existing_ids{ $result->[0] } = 1;
  }
  $add_sequence_alias->execute( $md5sum, $id ) unless $existing_ids{$id};
+ $gene_aliases_threads{$md5sum}{$id}=1;
 }
 
 sub sqlite_get_seq_aliases() {
@@ -1826,6 +1830,7 @@ sub prepare_alignment_from_existing() {
  print LOG "\n" . &mytime
    . "Aligning: Using user-provided alignment for $readset_basename\n";
 
+ if (!$existing_bam_is_coordsorted){
  # namesorted bam
  # hard link:
  link( $use_existing_bam[$i], "$alignment_bam_file.namesorted" )
@@ -1838,10 +1843,29 @@ sub prepare_alignment_from_existing() {
    . $use_existing_bam[$i]
    . " as $alignment_bam_file.namesorted\n"
    unless -s "$alignment_bam_file.namesorted";
+  &process_cmd(   "$samtools_exec sort -@ $samtools_threads -m $sam_sort_memory "               . $use_existing_bam[$i]               . " $alnbase  2>/dev/null" ) unless -s $alignment_bam_file;
+ }else{
+ # coord sorted
+ # hard link:
+ link( $use_existing_bam[$i], "$alignment_bam_file" )
+   unless -s "$alignment_bam_file";
+ # in case hard link cannot occur:
+ symlink( $use_existing_bam[$i], "$alignment_bam_file" )
+   unless -s "$alignment_bam_file";
+ confess "Cannot link "
+   . $use_existing_bam[$i]
+   . " as $alignment_bam_file\n"
+   unless -s "$alignment_bam_file";
+  unless ( -s "$alignment_bam_file.namesorted"){
+    # samtools sort -f does'nt work with insuffiecient memory
+    &process_cmd(   "$samtools_exec sort -n -@ $samtools_threads -m $sam_sort_memory "
+               . $use_existing_bam[$i]
+               . " $alignment_bam_file.namesorted " );
+    rename("$alignment_bam_file.namesorted.bam","$alignment_bam_file.namesorted");
+  }
+  die "Cannot find $alignment_bam_file.namesorted \n" unless -s "$alignment_bam_file.namesorted";
+ }
 
-#         &process_cmd("$samtools_exec view -h -o $alignment_sam_file.namesorted ".$use_existing_bam[$i]) unless -s "$alignment_sam_file.namesorted";
- &process_cmd(   "$samtools_exec sort -@ $samtools_threads -m $sam_sort_memory "               . $use_existing_bam[$i]               . " $alnbase  2>/dev/null" )
-   unless -s $alignment_bam_file;
    
  &perform_correct_bias( $alignment_bam_file, $file_to_align, $readset,
                         $alignment_bam_file . '.namesorted' )
@@ -3888,7 +3912,8 @@ sub prepare_heatmap_for_canvas() {
   my $seq_md5sum = $for_json_array{'y'}{'vars'}->[$i];
 
   #  foreach my $seq_md5sum ( @{ $for_json_array{'y'}{'vars'} } ) {
-  my @aliases = &sqlite_get_seq_aliases($seq_md5sum);
+#  my @aliases = &sqlite_get_seq_aliases($seq_md5sum);
+  my @aliases = sort keys %{$gene_aliases_threads{$seq_md5sum}};
   @aliases = qw/none/ unless @aliases;
 
   #debug trial
@@ -4048,7 +4073,8 @@ sub prepare_scatter_for_canvas() {
    next unless $data[4];
    my $seq_md5sum = $data[0];
    $data[5] = log( $data[4] ) / -1;
-   my @aliases = &sqlite_get_seq_aliases($seq_md5sum);
+   #my @aliases = &sqlite_get_seq_aliases($seq_md5sum);
+   my @aliases = sort keys %{$gene_aliases_threads{$seq_md5sum}};
    @aliases = qw/none/ unless @aliases;
    my $alias =
      $user_alias{$seq_md5sum} ? $user_alias{$seq_md5sum}{'id'} : $seq_md5sum;
