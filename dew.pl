@@ -3861,7 +3861,7 @@ sub prepare_heatmap_for_canvas() {
  my $js_dir     = $js_graph_dir . 'js/';
  my $css_dir    = $js_graph_dir . 'css/';
  my $images_dir = $js_graph_dir . 'images/';
- system("cp -ru $RealBin/web/* $js_graph_dir/ ");
+ system("rsync --cvs-exclude -pur $RealBin/web/ $js_graph_dir/");
  my %for_json_array;
 
 # ignore for now $for_json_array{'z'} and $for_json_array{'x'} but they must be defined
@@ -4005,7 +4005,7 @@ sub prepare_scatter_for_canvas() {
  my $js_dir     = $js_graph_dir . 'js/';
  my $css_dir    = $js_graph_dir . 'css/';
  my $images_dir = $js_graph_dir . 'images/';
- system("cp -ru $RealBin/web/* $js_graph_dir/ ");
+ system("rsync --cvs-exclude -pur $RealBin/web/ $js_graph_dir/");
 
  my $print_2d = '
   <!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
