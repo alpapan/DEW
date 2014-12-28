@@ -1,0 +1,3 @@
+svn checkout svn://svn.code.sf.net/p/transdecoder/code-0/trunk transdecoder-code-0
+
+svn cp --username=bhaas svn+ssh://bhaas@svn.code.sf.net/p/transdecoder/code-0/trunk svn+ssh://bhaas@svn.code.sf.net/p/transdecoder/code-0/tags/TransDecoder_r20140704 -m 'release'
