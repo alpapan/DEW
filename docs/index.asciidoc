@@ -25,7 +25,7 @@ The results are presented as an interactive report that allows domain-experts to
 
 == Obtaining DEW
 
-Freely distributed from https://sourceforge.net/projects/jamps/files/RC/[here]. Please subscribe to the https://lists.sourceforge.net/lists/listinfo/jamps-users[user mailing list].
+Freely distributed from https://github.com/alpapan/DEW.
 
 It's not published. We really appreciate any comments and feedback you can provide, so please do no matter how minor you think they are (e.g. typos in this document).
 

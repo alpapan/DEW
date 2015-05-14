@@ -3,7 +3,7 @@
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
 <head>
 <meta http-equiv="Content-Type" content="application/xhtml+xml; charset=UTF-8" />
-<meta name="generator" content="AsciiDoc 8.6.6" />
+<meta name="generator" content="AsciiDoc 8.6.9" />
 <title>User instructions</title>
 <style type="text/css">
 /* Shared CSS for AsciiDoc xhtml11 and html5 backends */
@@ -87,9 +87,15 @@ ul, ol, li > p {
 ul > li     { color: #aaa; }
 ul > li > * { color: black; }
 
-pre {
+.monospaced, code, pre {
+  font-family: "Courier New", Courier, monospace;
+  font-size: inherit;
+  color: navy;
   padding: 0;
   margin: 0;
+}
+pre {
+  white-space: pre-wrap;
 }
 
 #author {
@@ -219,7 +225,7 @@ div.exampleblock > div.content {
 }
 
 div.imageblock div.content { padding-left: 0; }
-span.image img { border-style: none; }
+span.image img { border-style: none; vertical-align: text-bottom; }
 a.image:visited { color: white; }
 
 dl {
@@ -349,7 +355,7 @@ div.colist td img {
   margin-bottom: 0.1em;
 }
 
-div.toclevel1, div.toclevel2, div.toclevel3, div.toclevel4 {
+div.toclevel0, div.toclevel1, div.toclevel2, div.toclevel3, div.toclevel4 {
   margin-top: 0;
   margin-bottom: 0;
 }
@@ -407,17 +413,13 @@ span.underline { text-decoration: underline; }
 span.overline { text-decoration: overline; }
 span.line-through { text-decoration: line-through; }
 
+div.unbreakable { page-break-inside: avoid; }
+
 
 /*
  * xhtml11 specific
  *
  * */
-
-tt {
-  font-family: monospace;
-  font-size: inherit;
-  color: navy;
-}
 
 div.tableblock {
   margin-top: 1.0em;
@@ -451,12 +453,6 @@ div.tableblock > table[frame="vsides"] {
  * html5 specific
  *
  * */
-
-.monospaced {
-  font-family: monospace;
-  font-size: inherit;
-  color: navy;
-}
 
 table.tableblock {
   margin-top: 1.0em;
@@ -537,6 +533,8 @@ body.manpage div.sectionbody {
 @media print {
   body.manpage div#toc { display: none; }
 }
+
+
 </style>
 <script type="text/javascript">
 /*<![CDATA[*/
@@ -581,7 +579,7 @@ toc: function (toclevels) {
 
   function tocEntries(el, toclevels) {
     var result = new Array;
-    var re = new RegExp('[hH]([2-'+(toclevels+1)+'])');
+    var re = new RegExp('[hH]([1-'+(toclevels+1)+'])');
     // Function that scans the DOM tree for header elements (the DOM2
     // nodeIterator API would be a better technique but not supported by all
     // browsers).
@@ -610,7 +608,7 @@ toc: function (toclevels) {
   var i;
   for (i = 0; i < toc.childNodes.length; i++) {
     var entry = toc.childNodes[i];
-    if (entry.nodeName == 'div'
+    if (entry.nodeName.toLowerCase() == 'div'
      && entry.getAttribute("class")
      && entry.getAttribute("class").match(/^toclevel/))
       tocEntriesToRemove.push(entry);
@@ -656,7 +654,7 @@ footnotes: function () {
   var entriesToRemove = [];
   for (i = 0; i < noteholder.childNodes.length; i++) {
     var entry = noteholder.childNodes[i];
-    if (entry.nodeName == 'div' && entry.getAttribute("class") == "footnote")
+    if (entry.nodeName.toLowerCase() == 'div' && entry.getAttribute("class") == "footnote")
       entriesToRemove.push(entry);
   }
   for (i = 0; i < entriesToRemove.length; i++) {
@@ -743,7 +741,7 @@ asciidoc.install();
 <div class="sectionbody">
 <div class="paragraph"><p>You need some libraries installed. Simply see/run dew.install.sh</p></div>
 <div class="listingblock">
-<div class="content"><!-- Generator: GNU source-highlight 3.1.5
+<div class="content"><!-- Generator: GNU source-highlight 3.1.7
 by Lorenzo Bettini
 http://www.lorenzobettini.it
 http://www.gnu.org/software/src-highlite -->
@@ -780,7 +778,7 @@ optionally, a tab delimited file that described your libraries (-library_name_fi
 <div class="paragraph"><p>The libraries (a.k.a. readsets) should be one (single-ended) or two (paired-end) files per RNASeq library. Provide them with <em>-1read</em> and <em>-2read</em> (in same/synchronised order)</p></div>
 <div class="paragraph"><p>The -library_name_file file is optional but very useful as it adds metadata to the JavaScript graphs. It is also used by edgeR to identify replicates within a group. It has two required columns whose names must be included in the first line: the first has to be <em>file</em> and the second has to be <em>name</em>. The <em>file</em> is the filename of what is provided as the -1read, <em>name</em> is just a friendly name for the graphs. You can provide any other column. The column <em>group</em> is optional if you have replicates (replicates are not fully supported yet).</p></div>
 <div class="listingblock">
-<div class="content"><!-- Generator: GNU source-highlight 3.1.5
+<div class="content"><!-- Generator: GNU source-highlight 3.1.7
 by Lorenzo Bettini
 http://www.lorenzobettini.it
 http://www.gnu.org/software/src-highlite -->
@@ -788,7 +786,7 @@ http://www.gnu.org/software/src-highlite -->
 HaGR32_1<span style="color: #990000">.</span>fastq<span style="color: #990000">.</span>trimmomatic<span style="color: #990000">.</span>bz2  Mixed-feeding_5th_instar-antennae       mixed   antennae        5th instar      HaGR32  Mixed_feeding_5th_instar_antennae</tt></pre></div></div>
 <div class="paragraph"><p>You can use perldoc to see the description of the <em>dew.pl</em> file.</p></div>
 <div class="listingblock">
-<div class="content"><!-- Generator: GNU source-highlight 3.1.5
+<div class="content"><!-- Generator: GNU source-highlight 3.1.7
 by Lorenzo Bettini
 http://www.lorenzobettini.it
 http://www.gnu.org/software/src-highlite -->
@@ -799,23 +797,23 @@ Usage<span style="color: #990000">:</span>
     -1read<span style="color: #990000">)</span></tt></pre></div></div>
 <div class="literalblock">
 <div class="content">
-<pre><tt>-infile :s              =&gt; Reference file of genes
+<pre><code>-infile :s              =&gt; Reference file of genes
 -sequence :s            =&gt; Instead of a file, provide a single sequence (in FASTA format with \n as line separator);
 -format :s              =&gt; The reads can be in BAM or FASTQ format. FASTQ can be .bz2 if bowtie2 is used
 -1read|readset1|r :s{1,}=&gt; Sets of files (one per library). Tested with Phred33 FASTQ format
--2read|readset2: s{1,}  =&gt; If provided, do paired end alignment. Sets of paired right files (synced to readset1). Optional.</tt></pre>
+-2read|readset2: s{1,}  =&gt; If provided, do paired end alignment. Sets of paired right files (synced to readset1). Optional.</code></pre>
 </div></div>
 <div class="literalblock">
 <div class="content">
-<pre><tt>-samtools_exec :s       =&gt; Executable to samtools if not in your path
+<pre><code>-samtools_exec :s       =&gt; Executable to samtools if not in your path
 -bwa_exec :s            =&gt; Executable to BWA if not in your path
 -bowtie2_exec :s        =&gt; Executable to Bowtie2 if not in your path
 -bamtools_exec :s       =&gt; Executable to bamtools if not in your path
--kangade_exec :s        =&gt; Executable to kangade if not in your path</tt></pre>
+-kangade_exec :s        =&gt; Executable to kangade if not in your path</code></pre>
 </div></div>
 <div class="literalblock">
 <div class="content">
-<pre><tt>-uid :s                 =&gt; A uid for naming output files. Optional, otherwise generate
+<pre><code>-uid :s                 =&gt; A uid for naming output files. Optional, otherwise generate
 -threads :i             =&gt; Number of CPUs to use for alignment. BWA has no advantage over 4 threads
 -library_name_file :s   =&gt; An tag value tab delimited file (filename/alias) for giving a friendly alias for each readset library. Needs a header line to describe columns. Only include -1read files.
 -median_cutoff :i       =&gt; Median number of hits across reference must be above cutoff
@@ -840,7 +838,7 @@ Usage<span style="color: #990000">:</span>
 -binary_min_coverage :f =&gt; Minimum gene (length) coverage (0.00 ~ 1.00) for counting a gene as a expressed or not (def. 0.3)
 -binary_min_reads :i    =&gt; Minimum number of aligned reads for counting a gene as a expressed or not (def. 4)
 -never_skip             =&gt; Always process graph for gene/readset pair, regardless of cutoffs
--sort_memory_gb :i      =&gt; Max gigabytes of memory to use for sorting (def 18). Make sure this is less than the available/requested RAM</tt></pre>
+-sort_memory_gb :i      =&gt; Max gigabytes of memory to use for sorting (def 18). Make sure this is less than the available/requested RAM</code></pre>
 </div></div>
 </div>
 </div>
@@ -848,7 +846,7 @@ Usage<span style="color: #990000">:</span>
 <div id="footnotes"><hr /></div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2014-04-09 13:28:33 EST
+Last updated 2015-05-14 06:20:03 EST
 </div>
 </div>
 </body>
