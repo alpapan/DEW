@@ -2432,7 +2432,7 @@ sub namesort_sam(){
  return $out if -s $out;
  &process_cmd("$samtools_exec view -H -S $sam > $out 2> /dev/null");
  confess "Can't produce $out. Is it a SAM file?\n" unless -s $out;
- &process_cmd("$samtools_exec view -S $sam  2> /dev/null| sort -S $sort_memory_sub -nk4,4|$sort_exec -S $sort_memory_sub -s -k3,3|$sort_exec -S $sort_memory_sub -s -k1,1 >> $out" );
+ &process_cmd("$samtools_exec view -S $sam  2> /dev/null| $sort_exec -T \$PWD -S $sort_memory_sub -nk4,4|$sort_exec -T \$PWD -S $sort_memory_sub -s -k3,3|$sort_exec -T \$PWD -S $sort_memory_sub -s -k1,1 >> $out" );
  unlink($sam);
  chdir($result_dir);
  link( fileparse($out), fileparse($sam));
@@ -2679,7 +2679,7 @@ sub perform_correct_bias($$$) {
  }
  
  my $reads_that_aligned = `$samtools_exec view -F260 $original_bam|wc -l` if -s $original_bam;chomp($reads_that_aligned);
- my $genes_that_aligned =  `$samtools_exec view -F260 $original_bam|cut -f 3 |$sort_exec -S $sort_memory_exec -u|wc -l` if -s $original_bam;chomp($genes_that_aligned);
+ my $genes_that_aligned =  `$samtools_exec view -F260 $original_bam|cut -f 3 |$sort_exec -T \$PWD -S $sort_memory_exec -u|wc -l` if -s $original_bam;chomp($genes_that_aligned);
  
  if ( !$reads_that_aligned ) {
   confess "No reads aligned!";
@@ -2766,7 +2766,7 @@ my $express_dir      = $result_dir . "$readset_name.bias";
 
      #sort for express
      &process_cmd(
-"$samtools_exec view -F4 -o $tmp_sam_file $original_bam '$id'  |$sort_exec -S $sort_memory_exec -k1  >>$tmp_sam_file  "
+"$samtools_exec view -F4 -o $tmp_sam_file $original_bam '$id'  |$sort_exec -T \$PWD -S $sort_memory_exec -k1  >>$tmp_sam_file  "
      );
      if ( -s $tmp_sam_file < 200 ) {
       warn "No alignments for $id. Skipping\n" if $debug;
@@ -2867,7 +2867,7 @@ my $express_dir      = $result_dir . "$readset_name.bias";
 
      #sort for express
      &process_cmd(
-       "$samtools_exec view -F4 $original_bam '$id' |$sort_exec -S $sort_memory_exec -k1  >>$tmp_sam_file "
+       "$samtools_exec view -F4 $original_bam '$id' |$sort_exec -T \$PWD -S $sort_memory_exec -k1  >>$tmp_sam_file "
      );
      if ( !-s $tmp_sam_file || -s $tmp_sam_file < 200 ) {
       warn "No alignments for $id. Skipping\n" if $debug;
