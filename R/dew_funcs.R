@@ -423,7 +423,7 @@ edgeR_DE_explore = function (genesaliases_file, targetsFile, baseout='tmp', disp
 		# give us the results for the group factor
 		edgeR_obj_de <- edgeR_DE_postanalysis(aliases,edgeR_obj, edgeR_obj_de, baseout, dispersion, FDR,kclusters)
 	}
-	save.image(file=paste(baseout,".edgeR.Rdata",sep=""));
+	save.image(file=paste(baseout,".Rdata",sep=""));
 #	return (edgeR_obj_de)
 }
 
@@ -534,7 +534,7 @@ edgeR_DE_postanalysis = function (aliases,edgeR_obj, edgeR_obj_de, baseout='tmp'
 		}
 	}  
 	dev.off()
-	rm(d,i,ymin,ymax)
+	#rm(d,i,ymin,ymax)
 	# add real gene names:
 	clustering.data <- ordered.data
 	rownames(clustering.data)<-convert_from_uid(aliases,rownames(clustering.data))
