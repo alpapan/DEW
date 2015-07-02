@@ -131,7 +131,7 @@ test times:
             -genomewide             => Your input provides all the genes of the genome, i.e. expecting to have all reads in the readset aligning. This influences eXpress only. Untested but probably needed for genomewide analyses that have readsets with large amount of non coding sequence (e.g. rDNA). Also stores data in database cache
             -only_alignments        => Stop after all alignments are completed. Good for large data/alignments and HPC environments. Use without -contextual (and use with -nographs). 
             -cleanup                => Delete alignments after successful completion
-            -no_pairwise            => Do not do pairwise comparisons (kangade and edgeR)
+            -no_pairwise            => Do not do pairwise comparisons (kangade and edgeR). Otherwise, this can be VERY memory intense for genomewide for many (20+) libraries (160Gb)
             -no_check               => When re-starting, do not check database if every gene has been stored. Do not use if you're adding new genes or database was incomplete (it will crash later), but use if you're restarting and have lots of genes.
             -options_single :s      => Extra options  (on top of -extra_options). These will apply only on single-end readsets (given without a matching -2read); e.g. "express:r-stranded". Only Express supported currently
             -verbose                => Print on the screen any system commands that are run. Caution, that will produce a lot of output on the screen they are kept in the .log file anyway).
