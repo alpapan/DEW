@@ -1,5 +1,5 @@
 #!/bin/bash
-echo Installing dependencies (Perl, R)
+echo "Installing dependencies (Perl, R)"
 echo you may want to run this as root...
 sleep 3
 echo Installing Perl dependencies
