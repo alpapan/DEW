@@ -480,6 +480,11 @@ edgeR_DE_postanalysis = function (aliases,edgeR_obj, edgeR_obj_de, baseout='tmp'
 	plotSmear(edgeR_obj, de.tags=detags_names)
 	abline(h=c(-1,1), col="blue")
 	dev.off()
+
+	pdf(file=paste(baseout,'.pdf',sep=''), width = 10, height = 10)
+	plotSmear(edgeR_obj, de.tags=detags_names)
+	abline(h=c(-1,1), col="blue")
+	dev.off()
 	
 	# table with entries of interest
 	unlink(paste(baseout,'.results.txt',sep=''))
@@ -566,6 +571,11 @@ edgeR_DE_postanalysis = function (aliases,edgeR_obj, edgeR_obj_de, baseout='tmp'
 	# heatmap
 	cat ("Producing info for heatmap and other graphs...\n")
 	svg(file=paste(baseout,'.heatmap.svg',sep=''), width=10, height=18)
+	figure.heatmap1<-heatmap.2(clustering.data, dendrogram="both", Rowv=as.dendrogram(hc_genes), Colv=as.dendrogram(hc_samples), col=myheatcol, RowSideColors=gene_colors,
+			scale="none", density.info="none", trace="none", key=TRUE, keysize=1.2, cexCol=2.5, margins=c(15,15), lhei=c(0.4,2), lwid=c(2.5,4))
+	dev.off();
+
+	pdf(file=paste(baseout,'.heatmap.pdf',sep=''), width=10, height=18)
 	figure.heatmap1<-heatmap.2(clustering.data, dendrogram="both", Rowv=as.dendrogram(hc_genes), Colv=as.dendrogram(hc_samples), col=myheatcol, RowSideColors=gene_colors,
 			scale="none", density.info="none", trace="none", key=TRUE, keysize=1.2, cexCol=2.5, margins=c(15,15), lhei=c(0.4,2), lwid=c(2.5,4))
 	dev.off();
