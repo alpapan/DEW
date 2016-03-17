@@ -296,7 +296,7 @@ my (
 my $given_cmd = $0 . " " . join( " ", @ARGV );
 
 pod2usage $! unless GetOptions(
- 'no_check'      => \$no_checks,            #TMP for Debug; should not be needed
+ 'nocheck|no_check'      => \$no_checks,            #TMP for Debug; should not be needed
  'infile:s'      => \$input_reference_file,
  'extra_genes:s' => \$extra_genes,
  'sequence:s'    => \$user_ref_sequence,
@@ -321,7 +321,7 @@ pod2usage $! unless GetOptions(
  'hostname:s'                => \$db_hostname,
  'dbname:s'                  => \$dbname,
  'seeddb:s'                  => \$initial_db,
- 'o:s'                       => \$main_output_dir,
+ 'out:s'                       => \$main_output_dir,
  'contextual'                => \$contextual_alignment,
  'correct_bias|isoforms'     => \$perform_bias_correction,
  'bwa'                       => \$use_bwa,
@@ -351,9 +351,9 @@ pod2usage $! unless GetOptions(
  'cleanup'                    => \$cleanup,
  'no_js_graphs'               => \$no_js_graphs,
  'png_graphs'                 => \$do_png,
- 'no_pairwise'                => \$no_pairwise,
+ 'nopairwise|no_pairwise'                => \$no_pairwise,
  'options_single:s'           => \$options_single,
- 'no_pdf'                     => \$no_pdf,
+ 'nopdf|no_pdf'                     => \$no_pdf,
  'express_min_bias:i'         => \$express_min_bias
 );
 
