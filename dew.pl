@@ -1843,7 +1843,9 @@ sub prepare_alignment_from_existing() {
    . $use_existing_bam[$i]
    . " as $alignment_bam_file.namesorted\n"
    unless -s "$alignment_bam_file.namesorted";
-  &process_cmd(   "$samtools_exec sort -@ $samtools_threads -m $sam_sort_memory "               . $use_existing_bam[$i]               . " $alnbase  2>/dev/null" ) unless -s $alignment_bam_file;
+  &process_cmd("$samtools_exec sort -@ $samtools_threads -m $sam_sort_memory "
+    . $use_existing_bam[$i]
+    . " > $alignment_bam_file  2>/dev/null" ) unless -s $alignment_bam_file;
  }else{
  # coord sorted
  # hard link:
@@ -1860,7 +1862,7 @@ sub prepare_alignment_from_existing() {
     # samtools sort -f does'nt work with insuffiecient memory
     &process_cmd(   "$samtools_exec sort -n -@ $samtools_threads -m $sam_sort_memory "
                . $use_existing_bam[$i]
-               . " $alignment_bam_file.namesorted " );
+               . " > $alignment_bam_file.namesorted.bam " );
     rename("$alignment_bam_file.namesorted.bam","$alignment_bam_file.namesorted");
   }
   die "Cannot find $alignment_bam_file.namesorted \n" unless -s "$alignment_bam_file.namesorted";
@@ -1955,9 +1957,9 @@ sub perform_alignments() {
    &align_bowtie2( $baseout, $file_to_align, $readset, $readset2, $bam, $sam );
   }
   confess "Could not produce SAM file for $readset\n" unless -s $sam;
-  &process_cmd("$samtools_exec view -S -u $sam 2>/dev/null|$samtools_exec sort -@ $samtools_threads -m $sam_sort_memory - $baseout 2>/dev/null"  ) unless -s $bam;
+  &process_cmd("$samtools_exec view -S -u $sam 2>/dev/null|$samtools_exec sort -@ $samtools_threads -m $sam_sort_memory - > $bam 2>/dev/null"  ) unless -s $bam;
  }
- confess "Could not convert to BAM file for $readset\n" unless -s $bam;
+ confess "Could not convert to BAM file ($bam) for $readset\n" unless -s $bam;
  &process_cmd("$samtools_exec index $bam")
    unless -s $bam . '.bai' && ( -s $bam . '.bai' ) > 200;
  return ( $bam, $sam );
@@ -2374,9 +2376,7 @@ sub align_bowtie2() {
  my $build_exec = $bowtie2_exec . '-build';
  unless ( -s "$file_to_align.1.bt2" ) {
   print "\t\t\tBuilding reference file for bowtie...\r";
-  &process_cmd(
-"$build_exec --offrate 1 $file_to_align $file_to_align >/dev/null 2>> $result_dir/$uid.log"
-  );
+  &process_cmd("$build_exec --offrate 1 $file_to_align $file_to_align >/dev/null 2>> $result_dir/$uid.log"  );
   print " Done!\n";
  }
  my $readgroup = '@RG\tID:' . $readset;
@@ -2387,11 +2387,11 @@ sub align_bowtie2() {
   if ( $read_format eq 'fastq' ) {
    my $qformat = &check_fastq_format($readset);
    if ($qformat eq 'fasta'){
-   	&process_cmd("$bowtie2_exec --reorder -a -f --threads $threads --rdg 6,5 --rfg 6,5 --score-min L,-0.6,-0.4 --no-discordant -X $fragment_max_length --no-mixed --no-unal -x $file_to_align -1 $readset -2 $readset2 -S $sam 2> $baseout.log"   ) unless -s "$baseout.log";
+   	&process_cmd("$bowtie2_exec --reorder -a -f --threads $threads --rdg 6,5 --rfg 6,5 --score-min L,-0.6,-0.4 --no-discordant -X $fragment_max_length --no-mixed --no-unal -x $file_to_align -1 $readset -2 $readset2 -S $sam 2> $baseout.log"   ) unless -s $sam;
    }else{
 	$qformat = '--'.$qformat;
       # NB --all is -a but --all is a bug
-   	&process_cmd("$bowtie2_exec --reorder $qformat -a -q --threads $threads --rdg 6,5 --rfg 6,5 --score-min L,-0.6,-0.4 --no-discordant -X $fragment_max_length --no-mixed --no-unal -x $file_to_align -1 $readset -2 $readset2 -S $sam 2> $baseout.log"   ) unless -s "$baseout.log";
+   	&process_cmd("$bowtie2_exec --reorder $qformat -a -q --threads $threads --rdg 6,5 --rfg 6,5 --score-min L,-0.6,-0.4 --no-discordant -X $fragment_max_length --no-mixed --no-unal -x $file_to_align -1 $readset -2 $readset2 -S $sam 2> $baseout.log"   ) unless -s $sam;
    }
   }
   else {
@@ -2407,10 +2407,10 @@ sub align_bowtie2() {
   if ( $read_format eq 'fastq' ) {
    my $qformat = &check_fastq_format($readset);
    if ($qformat eq 'fasta'){
-	&process_cmd("$bowtie2_exec --reorder -a -f --rdg 6,5 --rfg 6,5 --score-min L,-0.6,-0.4 --no-unal --threads $threads -x $file_to_align -U $readset -S $sam 2> $baseout.log >/dev/null" ) unless -s "$baseout.log";
+	&process_cmd("$bowtie2_exec --reorder -a -f --rdg 6,5 --rfg 6,5 --score-min L,-0.6,-0.4 --no-unal --threads $threads -x $file_to_align -U $readset -S $sam 2> $baseout.log >/dev/null" ) unless -s $sam;
    }else{
 	$qformat = '--'.$qformat;
-	&process_cmd("$bowtie2_exec --reorder $qformat -a -q --rdg 6,5 --rfg 6,5 --score-min L,-0.6,-0.4 --no-unal --threads $threads -x $file_to_align -U $readset -S $sam 2> $baseout.log >/dev/null" ) unless -s "$baseout.log";
+	&process_cmd("$bowtie2_exec --reorder $qformat -a -q --rdg 6,5 --rfg 6,5 --score-min L,-0.6,-0.4 --no-unal --threads $threads -x $file_to_align -U $readset -S $sam 2> $baseout.log >/dev/null" ) unless -s $sam;
    }
   }
   else {
@@ -2715,16 +2715,13 @@ my $express_dir      = $result_dir . "$readset_name.bias";
  unless ( -s $express_results ) {
   mkdir($express_dir) unless -d $express_dir;
   if ($use_bwa) {
-   &process_cmd(
-"$samtools_exec sort -@ $samtools_threads -n -m $sam_sort_memory $original_bam $namesorted_sam 2>/dev/null"
+   &process_cmd("$samtools_exec sort -@ $samtools_threads -n -m $sam_sort_memory $original_bam > $namesorted_sam.bam 2>/dev/null"
    ) unless -s $namesorted_bam;
    if ($contextual_alignment) {
-    &process_cmd(
-"$current_express_exec  -o $express_dir --output-align-samp $fasta_file $namesorted_bam >/dev/null 2> $express_results.log"
+    &process_cmd("$current_express_exec  -o $express_dir --output-align-samp $fasta_file $namesorted_bam > /dev/null 2> $express_results.log"
     ) unless -s "$express_dir/results.xprs";
     sleep(30);
-    &process_cmd(
-"$samtools_exec sort -@ $samtools_threads -m $sam_sort_memory $express_dir/hits.1.samp.bam $express_bam_base 2>/dev/null"
+    &process_cmd("$samtools_exec sort -@ $samtools_threads -m $sam_sort_memory $express_dir/hits.1.samp.bam > $express_bam_base.bam 2>/dev/null"
     ) unless -s "$express_bam_base.bam";
     rename( "$express_dir/results.xprs", $express_results );
     rename( "$express_dir/varcov.xprs",  $express_results . ".varcov" );
@@ -2815,7 +2812,7 @@ my $express_dir      = $result_dir . "$readset_name.bias";
        unless -s "$express_dir/results.xprs";
      sleep(30);
      &process_cmd(
-"$samtools_exec view -u $express_dir/hits.1.samp.bam | $samtools_exec sort -@ $samtools_threads -m $sam_sort_memory - $express_bam_base 2>/dev/null"
+"$samtools_exec view -u $express_dir/hits.1.samp.bam | $samtools_exec sort -@ $samtools_threads -m $sam_sort_memory - > $express_bam_base.bam 2>/dev/null"
      ) unless -s "$express_bam_base.bam";
     }
     elsif ( -s $namesorted_sam ) {
@@ -2826,7 +2823,7 @@ my $express_dir      = $result_dir . "$readset_name.bias";
        unless -s "$express_dir/results.xprs";
      sleep(30);
      my $express_hits_file = -s "$express_dir/hits.1.samp.bam" ? "$express_dir/hits.1.samp.bam" : "$express_dir/hits.1.samp.sam";
-     &process_cmd("$samtools_exec view -S -u $express_hits_file | $samtools_exec sort -@ $samtools_threads -m $sam_sort_memory - $express_bam_base 2>/dev/null") unless -s "$express_bam_base.bam";
+     &process_cmd("$samtools_exec view -S -u $express_hits_file | $samtools_exec sort -@ $samtools_threads -m $sam_sort_memory - > $express_bam_base.bam 2>/dev/null") unless -s "$express_bam_base.bam";
     }
     rename( "$express_dir/results.xprs", $express_results );
 

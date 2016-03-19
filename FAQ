@@ -4,29 +4,29 @@ A: "Get more recent versions of the GD and GD::SVG [perl] libraries and the prob
 --Lincoln D. Stein
 
 A: Alexie:
-I still have these issues with GD 2.56 and GD::SVG 0.33
+I still have these issues with GD 2.56 and GD::SVG 0.33 (Ubuntu 14.04)
 ERROR, thread [..] exited with error Can't use an undefined value as an ARRAY reference at /usr/local/share/perl/5.18.2/GD/SVG.pm line 1120, <STATSIN> line 2."
 Troubleshooting:
-It seems that Bio::Graphics::Glyph::xyplot::
-_draw_boxes make a call to
-GD::SVG with a very high integer value
+It seems that Bio::Graphics::Glyph::xyplot::_draw_boxes makes a call to GD::SVG with a very high integer value
 *1073742019 at /usr/local/share/perl/5.14.2/GD/SVG.pm line 1120.*
     GD::SVG::Image::_get_color('GD::SVG::Image=HASH(0x39be900)',
 The problem seems to lie here:
   # Make the boxes transparent
   my $positive = $self->pos_color + 1073741824;
   my $negative = $self->neg_color + 1073741824;
-What is the purpose of adding 1073741824 ? There isn't an color index above
-200 when i dump the GD object. It seems that this integer addition is
-mainly for PNG formats and transparency? If I remove this addition, then
-the SVG works fine and the image is correct
 
+What is the purpose of adding 1073741824 ? There isn't an color index above 200 when i dump the GD object. It seems that this integer addition is 
+mainly for PNG formats and transparency? If I remove this addition, then the SVG works fine and the image is correct
 [Reported gmod-devel-request@lists.sourceforge.net  19/05/2014. No reply]
 
-Solution:
+Therefore solution:
 edit
 Bio/Graphics/Glyph/xyplot.pm
-And add ;# as below at line 314 and 315
+And add ;# as below at line 314 and 315 to remove the addition of this integer
   my $positive = $self->pos_color;# + 1073741824;
   my $negative = $self->neg_color;# + 1073741824;
+
+Q2. I have a mix of single and pair ends. What shall I do?
+A: Add the single ends as -1read but after all the paired end data. The program will say:
+"Number of files for second readset does not equal to number of 1st readset. Extra files will be treated as single end readsets."
 
