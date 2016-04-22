@@ -1,0 +1,14 @@
+--- /usr/local/share/perl/5.18.2/Bio/Graphics/Glyph/xyplot.pm.fix	2016-04-22 14:25:38.385303713 +1000
++++ /usr/local/share/perl/5.18.2/Bio/Graphics/Glyph/xyplot.pm	2016-04-22 14:18:14.000000000 +1000
+@@ -311,8 +311,8 @@
+   my @parts    = $self->parts;
+   my $lw       = $self->linewidth;
+   # Make the boxes transparent
+-  my $positive = $self->pos_color#AP + 1073741824;
+-  my $negative = $self->neg_color#AP + 1073741824;
++  my $positive = $self->pos_color + 1073741824;
++  my $negative = $self->neg_color + 1073741824;
+   my $height   = $self->height;
+ 
+   my $midpoint = $self->midpoint ? $self->score2position($self->midpoint) 
+

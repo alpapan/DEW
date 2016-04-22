@@ -1,11 +1,22 @@
 First you need to install some Perl libraries. This can be done by your system administrator or in your own user directory (if setup properly - ask your sysadmin)
 The libraries can be installed like so:
- $ cpan Carp Pod::Usage Data::Dumper Getopt::Long Digest::MD5 Statistics::Descriptive Time::Progress Text::CSV_XS JSON JSON::XS SVG GD::SVG Devel::CheckLib Compress::LZ4
+ $ cpan Pod::Usage Getopt::Long Digest::MD5 Digest::SHA Statistics::Descriptive Time::Progress Time::localtime File::stat File::Path Text::CSV_XS Bio::SeqIO \
+ Cwd JSON FindBin DBI Storable GD::SVG SVG Devel::CheckLib JSON::XS Bio::Graphics Data::Dumper Compress::LZ4 
 
+Note that for GD you may need this library: libgd-dev
+$ sudo apt-get install libgd-dev
 
 Then just run 
 
 make
+
+# Errors from other people
+There seems to be an issue with the Bio::Graphics library. In particular the file Bio/Graphics/Glyph/xyplot.pm
+If you are having issues, after you install Bio::Graphics do (as root or sudo unless you installed Bio/Graphics as a user)
+updatedb && locate Bio/Graphics/Glyph/xyplot.pm
+patch Bio/Graphics/Glyph/xyplot.pm patch.biographics.diff
+
+
 
 == For people using intel compilers:
 ======================================================================================
