@@ -1,16 +1,12 @@
-First you need to install some Perl libraries. This can be done by your system administrator or in your own user directory (if setup properly - ask your sysadmin)
-The libraries can be installed like so:
- $ cpan Pod::Usage Getopt::Long Digest::MD5 Digest::SHA Statistics::Descriptive Time::Progress Time::localtime File::stat File::Path Text::CSV_XS Bio::SeqIO \
- Cwd JSON FindBin DBI Storable GD::SVG SVG Devel::CheckLib JSON::XS Bio::Graphics Data::Dumper Compress::LZ4 
-
 Note that for GD you may need this library: libgd-dev
 $ sudo apt-get install libgd-dev
 
-Then just run 
+Then you need to install some Perl libraries. This can be done by your system administrator or in your own user directory (if setup properly - ask your sysadmin)
 
-make
+$ sudo ./dew.install.sh
 
-# Errors from other people
+==Errors from other people
+======================================================================================
 There seems to be an issue with the Bio::Graphics library. In particular the file Bio/Graphics/Glyph/xyplot.pm
 If you are having issues, after you install Bio::Graphics do (as root or sudo unless you installed Bio/Graphics as a user)
 updatedb && locate Bio/Graphics/Glyph/xyplot.pm
