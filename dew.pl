@@ -2827,7 +2827,7 @@ my $express_dir      = $result_dir . "$readset_name.bias";
        unless -s "$express_dir/results.xprs";
      sleep(30);
      my $express_hits_file = -s "$express_dir/hits.1.samp.bam" ? "$express_dir/hits.1.samp.bam" : "$express_dir/hits.1.samp.sam";
-     &process_cmd("$samtools_exec view -S -u $express_hits_file | $samtools_exec sort -o -@ $samtools_threads -m $sam_sort_memory - > $express_bam_base.bam 2>/dev/null") unless -s "$express_bam_base.bam";
+     &process_cmd("$samtools_exec view -S -u $express_hits_file | $samtools_exec sort -o -@ $samtools_threads -m $sam_sort_memory - - > $express_bam_base.bam 2>/dev/null") unless -s "$express_bam_base.bam";
     }
     rename( "$express_dir/results.xprs", $express_results );
 
