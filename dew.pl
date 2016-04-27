@@ -1173,6 +1173,10 @@ sub perform_checks_preliminary() {
    if $use_bwa && ( !$bwa_exec || !-s $bwa_exec || !-x $bwa_exec );
  pod2usage "Samtools not found\n"
    unless $samtools_exec && -s $samtools_exec && -x $samtools_exec;
+
+ my $samtools_version = `$samtools_exec 2>&1 |head -n 3|tail -n 1`;
+ die "Because the Samtools folks keep changing the option list for sort, now Samtools 0.1.19 is required. See 3rd_party/ and make sure you ran make\n" unless $samtools_version && $samtools_version=~/0\.1\.19/;
+
  $read_format = lc($read_format);
  pod2usage "Read format can only be BAM or FASTQ\n"
    unless $read_format eq 'bam' || $read_format eq 'fastq';
