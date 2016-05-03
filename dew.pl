@@ -208,7 +208,7 @@ use File::Copy;
 use Text::CSV_XS;
 use Fasta_reader;
 use Cwd;
-use JSON;
+use JSON::PP;
 use Compress::LZ4;
 
 #threads
