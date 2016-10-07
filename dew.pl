@@ -128,7 +128,7 @@ test times:
             -sort_memory_gb :i      => Max memory (in Gb) to use for sorting (def 10). Make sure this is less than the available/requested RAM
             -remove_redund          => Remove redundant sequences (identical) in -infile
             -extra_options :s       => Extra options for e.g. express, exclude any initial --dashes from the express options (eg give as "express:rf-stranded;express:max-read-len 250" or "express:aux-param-file $PWD/align.all.params.xprs", including the "quotes" ). Only express implemented currently
-            -genomewide             => Your input provides all the genes of the genome, i.e. expecting to have all reads in the readset aligning. This influences eXpress only. Untested but probably needed for genomewide analyses that have readsets with large amount of non coding sequence (e.g. rDNA). Also stores data in database cache
+            -genomewide             => Your input provides all the genes of the genome, i.e. expecting to have all reads in the readset aligning. This influences eXpress only. Probably needed for genomewide analyses that have readsets with large amount of non coding sequence (e.g. rDNA). Also stores data in database cache
             -only_alignments        => Stop after all alignments are completed. Good for large data/alignments and HPC environments. Use without -contextual (and use with -nographs). 
             -cleanup                => Delete alignments after successful completion
             -no_pairwise            => Do not do pairwise comparisons (kangade and edgeR). Otherwise, this can be VERY memory intense for genomewide for many (20+) libraries (160Gb)
@@ -321,7 +321,7 @@ pod2usage $! unless GetOptions(
  'hostname:s'                => \$db_hostname,
  'dbname:s'                  => \$dbname,
  'seeddb:s'                  => \$initial_db,
- 'out:s'                       => \$main_output_dir,
+ 'out:s'                     => \$main_output_dir,
  'contextual'                => \$contextual_alignment,
  'correct_bias|isoforms'     => \$perform_bias_correction,
  'bwa'                       => \$use_bwa,
@@ -351,10 +351,10 @@ pod2usage $! unless GetOptions(
  'cleanup'                    => \$cleanup,
  'no_js_graphs'               => \$no_js_graphs,
  'png_graphs'                 => \$do_png,
- 'nopairwise|no_pairwise'                => \$no_pairwise,
+ 'nopairwise|no_pairwise'     => \$no_pairwise,
  'options_single:s'           => \$options_single,
- 'nopdf|no_pdf'                     => \$no_pdf,
- 'express_min_bias:i'         => \$express_min_bias
+ 'nopdf|no_pdf'               => \$no_pdf,
+ 'express_min_bias:i'         => \$express_min_bias,
 );
 
 die
