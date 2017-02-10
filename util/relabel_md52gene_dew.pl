@@ -3,10 +3,10 @@
 use strict;
 use warnings;
 
-my $md5file = glob("*md5");
-die unless $md5file;
+my $md5file = shift;
+die "$0 MD5file [1+ files to edit]\n" unless $md5file;
 my @files_to_edit = @ARGV;
-die unless @files_to_edit;
+die "$0 MD5file [1+ files to edit]\n" unless @files_to_edit;
 
 my %hash;
 open (IN,$md5file);
