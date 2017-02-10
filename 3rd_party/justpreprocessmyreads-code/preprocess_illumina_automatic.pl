@@ -10,15 +10,19 @@ $ENV{PATH} .= ":$RealBin";
 my ($is_sra,$is_seqcenter1,$is_seqcenter2) = (1,0,0);
 
 my $option = shift;
+my $extras = join(' ',@ARGV);
+
+
 $is_sra = 1 if $option && $option=~/sra/i;
 $is_seqcenter1 = 1 if $option && $option=~/seqcenter1/i;
-$is_seqcenter2 = 1 if $option && $option=~/seqcenter2/i;
+$is_seqcenter2 = 1 if $option && ($option=~/seqcenter2/i || $option=~/rama/i  ) ;
 
 # change this to find all the files from left pairs
 my @files;
-@files = glob("*_1_fastq") if $is_sra; #SRA
-@files = glob("*_1_sequence.fastq") if $is_seqcenter1;
-@files = glob("*R1_*.fastq") if $is_seqcenter2;
+@files = glob("*_1_fastq*") if $is_sra; #SRA
+@files = glob("*_1_sequence.fastq*") if $is_seqcenter1;
+@files = glob("*R1_*.fastq*") if $is_seqcenter2;
+
 
 foreach my $f (sort @files){
 	my $cmd = "$RealBin/preprocess_illumina.pl ";
@@ -30,9 +34,11 @@ foreach my $f (sort @files){
 	if (!-s $pair || $pair eq $f){
 		$cmd .= " '$f'";
 	}else{
-		$cmd .= " -paired '$f' '$pair'";
+		$cmd .= " -paired $extras '$f' '$pair'";
 	}
 	# can change the cmd to something you like
+	print "CMD: $cmd\n";
+	sleep(3);
 	system($cmd);
 	sleep(1);
 }
