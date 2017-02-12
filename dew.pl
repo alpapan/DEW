@@ -1293,7 +1293,8 @@ sub perform_checks_preliminary() {
   my @opt1 = split( ';', $extra_options );
   foreach my $op1 (@opt1) {
    my @opt2 = split( ':', $op1 );
-   $extra_express .= ' --' . $opt2[1] if $opt2[0] eq 'express';
+   next unless $opt2[1];
+   $extra_express .= ' --' . $opt2[1] if $opt2[0] && $opt2[0] eq 'express';
   }
   print "All data: Applying extra express options: $extra_express\n";
   print LOG "All data: Applying extra express options: $extra_express\n";
