@@ -98,7 +98,7 @@ test times:
 
  Optional:
 
-            -out or -uid       :s   => A uid for naming output files. Optional, otherwise generate
+            -output or -uid    :s   => A uid for naming output files. Optional, otherwise generate
             -threads :i             => Number of CPUs to use for alignment. BWA has no advantage over 4 threads
             -library_name_file :s   => An tag value tab delimited file for giving a friendly alias for each readset library. Needs a header line to describe columns ("file" and "name" in that order). Only include -1read files.
             -median_cutoff :i       => Median number of hits across reference must be above cutoff
@@ -310,7 +310,8 @@ pod2usage $! unless GetOptions(
  'bwa_exec:s'      => \$bwa_exec,            # modified bwa
  'biokanga_exec:s' => \$biokanga_exec,
 
- 'output|uid:s'              => \$uid,
+ 'out|output|uid:s'          => \$uid,
+ 'outdir:s'                  => \$main_output_dir,
  'threads:i'                 => \$threads,
  'alias|library_name_file:s' => \$lib_alias_file,
  'prepare_only'              => \$prepare_input_only,
@@ -321,7 +322,6 @@ pod2usage $! unless GetOptions(
  'hostname:s'                => \$db_hostname,
  'dbname:s'                  => \$dbname,
  'seeddb:s'                  => \$initial_db,
- 'out:s'                     => \$main_output_dir,
  'contextual'                => \$contextual_alignment,
  'correct_bias|isoforms'     => \$perform_bias_correction,
  'bwa'                       => \$use_bwa,
