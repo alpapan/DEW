@@ -4613,6 +4613,7 @@ sub check_fastq_format() {
 sub rename_graph_files_md52gene() {
  my $cwd2  = getcwd;
  my $dir   = shift;
+ my $file_type = $dir=~/coverage/ ? 'coverage' : 'expression';
  my @files = glob( $dir . "/*" );
  mkdir( $dir . '/gene_names' ) unless -d $dir . '/gene_names';
  foreach my $file (@files) {
@@ -4650,12 +4651,13 @@ sub rename_graph_files_md52gene() {
    next unless -s $file;
    $count_files++;
    if ( $count_files && $count_files > 500 && @file_slice ) {
-    next if -s "$outdir/rnaseq_$slice_count.pdf";
+    my $outpdffile = $outdir."/rnaseq_".$file_type."_$slice_count.pdf";
+    next if -s $outpdffile;
     my $thread = threads->create(
                                   'process_cmd',
                                   "$convert_imagemagick_exec "
                                     . join( " ", @file_slice )
-                                    . " $outdir/rnaseq_$slice_count.pdf"
+                                    . " $outpdffile"
     );
     $thread_helper->add_thread($thread);
     $slice_count++;
@@ -4664,14 +4666,15 @@ sub rename_graph_files_md52gene() {
    }
    push( @file_slice, "'$file'" );
   }
-  if ( @file_slice && !-s "$outdir/rnaseq_$slice_count.pdf" ) {
+  my $outpdffile = $outdir."/rnaseq_".$file_type."_$slice_count.pdf";
+  if ( @file_slice && !-s $outpdffile ) {
 
    # last ones
    my $thread = threads->create(
                                  'process_cmd',
                                  "$convert_imagemagick_exec "
                                    . join( " ", @file_slice )
-                                   . " $outdir/rnaseq_$slice_count.pdf"
+                                   . " $outpdffile"
    );
    $thread_helper->add_thread($thread);
   }
