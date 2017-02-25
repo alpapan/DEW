@@ -39,7 +39,7 @@ Speed up graph making by using memory (parallelizing doesn't work)
 
  Sort requires up to 20Gb of RAM but is configurable
 
- samtools i use is v. 0.1.18
+ samtools I use is v. 0.1.18
 
 =head1 EXAMPLE CMD
 
@@ -101,11 +101,10 @@ test times:
             -output or -uid    :s   => A uid for naming output files. Optional, otherwise generate
             -threads :i             => Number of CPUs to use for alignment. BWA has no advantage over 4 threads
             -library_name_file :s   => An tag value tab delimited file for giving a friendly alias for each readset library. Needs a header line to describe columns ("file" and "name" in that order). Only include -1read files.
-            -median_cutoff :i       => Median number of hits across reference must be above cutoff
             -need_all_readsets      => All sets of reads must have alignments against the gene in order for it to be processed. Otherwise, 1+ is sufficient. 
             -over                   => Allow overwriting of any files with the same name
             -nographs               => Do not produce any graphs. Graphs can take a very long time when there are many readsets (e.g. 30+ libraries and 30k+ genes).
-            -gene_graphs_only       => The opposite of above; only do enough work to get the gene depth/coverage graphs and then exit
+            -gene_coverage_graph    => Only do enough work to get the gene depth/coverage graphs and then exit. No expression boxplots
             -no_js_graphs           => If producing edgeR graphs, then don't produce javascript based graphs.
             -contextual             => Complete realignment of all genes in order to run a correction of biases properly. Does not read/store data in the cache
             -use_bwa                => Use BWA instead of Bowtie2. Much slower.
@@ -173,6 +172,7 @@ NB: I highly recommend you use either the latest version of Bowtie (2.1.0+) or K
 =head1 DISCLAIMER & LICENSE
 
 Copyright 2013-2014 the Commonwealth Scientific and Industrial Research Organization. 
+Copyright 2015-2016 the Western Sydney University
 This software is released under the Mozilla Public License v.2.
 
 It is provided "as is" without warranty of any kind.
@@ -207,7 +207,7 @@ use File::Path qw(remove_tree);
 use File::Copy;
 use Text::CSV_XS;
 use Fasta_reader;
-use Cwd;
+use Cwd qw(abs_path getcwd);
 use JSON::PP;
 use Compress::LZ4;
 
@@ -275,7 +275,7 @@ my $tree_clusters          = 10;
 my $read_format            = 'fastq';
 my $threads                = 3;
 my $min_housekeeping_genes = 5;
-my $median_cutoff          = 1;
+my $process_cutoff         = 1;
 my $binary_min_coverage    = 0.3;
 my $binary_min_reads       = 4;
 my $sort_memory            = 10;
@@ -287,7 +287,7 @@ my (
      $db_use_file,       $dbname,             $no_graphs,
      $user_ref_sequence, $do_kangade,         $main_output_dir,
      $use_bwa,           $prepare_input_only, @sample_overlays,
-     $initial_db,        $resume,             $gene_graphs_only,
+     $initial_db,        $resume,             $gene_coverage_graphs_only,
      %binary_table,      $never_skip,         $nobatch_express,
      $extra_options,     $genomewide,         $only_alignments,
      $options_single,    $no_js_graphs,       $do_png,
@@ -315,7 +315,6 @@ pod2usage $! unless GetOptions(
  'threads:i'                 => \$threads,
  'alias|library_name_file:s' => \$lib_alias_file,
  'prepare_only'              => \$prepare_input_only,
- 'median_cutoff:i'           => \$median_cutoff,
  'need_all_readsets'         => \$demand_all_readsets,
  'over'                      => \$overwrite_results,
  'no_graphs|nographs'        => \$no_graphs,
@@ -333,7 +332,7 @@ pod2usage $! unless GetOptions(
  'resume'                => \$resume,
  'do_kangade|dokangade'  => \$do_kangade,
  'db_use_file'           => \$db_use_file,
- 'gene_graphs_only'      => \$gene_graphs_only,
+ 'gene_coverage_graphs_only'      => \$gene_coverage_graphs_only,
  'dispersion:s'          => \$edgeR_dispersion,    #auto for bio.reps
  'fdr_cutoff:f'          => \$fdr_pval_cutoff,
  'cpm_cutoff'            => \$minCPM,
@@ -458,17 +457,12 @@ if ( !-s $counts_expression_level_matrix
  close STATS;
  close STATS_RATIO;
  &print_binary_table();
- if ($only_alignments) {
-  print "User stop requested after alignments are completed.\n";
-  &process_completion();
- }
 }
 else {
- print
-"Expression data already exists ($counts_expression_level_matrix). Will not reprocess. Acquiring data from database...\n";
-
+ print "Expression data already exists ($counts_expression_level_matrix). Will not reprocess. Acquiring data from database...\n";
  # we need to get all the expression coverage data
  &get_all_expression_data();
+ &print_binary_table();
 }
 
 if ($only_alignments) {
@@ -514,15 +508,17 @@ undef(%expression_coverage_stats_hash);
 &perform_coverage_graphs($expression_coverage_stats_hashref);
 undef($expression_coverage_stats_hashref);
 
-if ($gene_graphs_only) {
+if ($gene_coverage_graphs_only) {
  print "User stop requested after gene coverage graphs were completed.\n";
  &process_completion();
 }
 
-&process_edgeR_graphs_overview( $effective_expression_level_matrix_TMM_tpm,
-                                $result_dir . '/gene_expression_tpm/','TPM' );
-&process_edgeR_graphs_overview( $effective_expression_level_matrix_TMM_fpkm,
-                                $result_dir . '/gene_expression_fpkm/','FPKM' );
+unless ($no_graphs){
+	&process_edgeR_graphs_overview( $effective_expression_level_matrix_TMM_tpm,
+        	                        $result_dir . '/gene_expression_tpm/','TPM' );
+	&process_edgeR_graphs_overview( $effective_expression_level_matrix_TMM_fpkm,
+        	                        $result_dir . '/gene_expression_fpkm/','FPKM' );
+}
 
 &process_completion();
 
@@ -639,7 +635,7 @@ sub sqlite_init() {
   );
   $dbh->do("CREATE UNIQUE INDEX readsets_idx1 ON readsets(readset_file)");
   $dbh->do(
-"CREATE TABLE expression_statistics (seq_md5hash char(32), readset_id integer, mean_hits REAL, no_coverage integer, rpkm integer, mean_reads REAL, median_hits integer, total_hits integer, max_hits integer, hit_sd REAL, express_fpkm integer, express_eff_counts REAL,  express_tpm REAL, kangade_counts integer)"
+"CREATE TABLE expression_statistics (seq_md5hash char(32), readset_id integer, gene_length_coverage REAL, gene_length_coverage_mean REAL, no_coverage integer, rpkm integer, aligned_reads_per_base REAL, gene_length_coverage_median integer, total_aligned_reads integer, gene_length_coverage_max integer, gene_length_coverage_sd REAL, express_fpkm integer, express_eff_counts REAL,  express_tpm REAL, kangade_counts integer)"
   );
   $dbh->do(
 "CREATE UNIQUE INDEX expression_statistics_idx1 ON expression_statistics(seq_md5hash,readset_id)"
@@ -647,7 +643,7 @@ sub sqlite_init() {
 
   #tmp for uncached
   $dbh->do(
-"CREATE TABLE expression_statistics_tmp (seq_md5hash char(32), readset_id integer, mean_hits REAL, no_coverage integer, rpkm integer, mean_reads REAL, median_hits integer, total_hits integer, max_hits integer, hit_sd REAL, express_fpkm integer, express_eff_counts REAL, express_tpm REAL , kangade_counts integer)"
+"CREATE TABLE expression_statistics_tmp (seq_md5hash char(32), readset_id integer, gene_length_coverage REAL, gene_length_coverage_mean REAL, no_coverage integer, rpkm integer, aligned_reads_per_base REAL, gene_length_coverage_median integer, total_aligned_reads integer, gene_length_coverage_max integer, gene_length_coverage_sd REAL, express_fpkm integer, express_eff_counts REAL, express_tpm REAL , kangade_counts integer)"
   );
   $dbh->do(
 "CREATE UNIQUE INDEX expression_statistics_tmp_idx1 ON expression_statistics_tmp(seq_md5hash,readset_id)"
@@ -753,10 +749,10 @@ sub sqlite_init() {
 "INSERT INTO $expression_statistics_table (seq_md5hash, readset_id) VALUES (?,(SELECT readset_id from readsets where readset_file=?)) "
  );
  my $update_rpkm_expression_statistics = $dbh->prepare(
-"UPDATE $expression_statistics_table set rpkm=?, total_hits=? WHERE seq_md5hash=? AND readset_id=(SELECT readset_id from readsets where readset_file=?)"
+"UPDATE $expression_statistics_table set rpkm=?, total_aligned_reads=? WHERE seq_md5hash=? AND readset_id=(SELECT readset_id from readsets where readset_file=?)"
  );
  my $update_expression_statistics = $dbh->prepare(
-"UPDATE $expression_statistics_table set mean_hits=?, no_coverage=?, mean_reads=?, median_hits=?, max_hits=?, hit_sd=? WHERE seq_md5hash=? AND readset_id=(SELECT readset_id from readsets where readset_file=?)"
+"UPDATE $expression_statistics_table set gene_length_coverage=?, gene_length_coverage_mean=?, no_coverage=?, aligned_reads_per_base=?, gene_length_coverage_median=?, gene_length_coverage_max=?, gene_length_coverage_sd=? WHERE seq_md5hash=? AND readset_id=(SELECT readset_id from readsets where readset_file=?)"
  );
  my $update_express_expression_statistics = $dbh->prepare(
 "UPDATE $expression_statistics_table set express_fpkm=?,express_eff_counts=?,express_tpm=? WHERE seq_md5hash=? AND readset_id=(SELECT readset_id from readsets where readset_file=?)"
@@ -882,7 +878,7 @@ sub sqlite_destroy() {
   #empty temporary tables and re-create their schema
   $dbh->do("DROP TABLE expression_statistics_tmp");
   $dbh->do(
-"CREATE TABLE expression_statistics_tmp (seq_md5hash char(32), readset_id integer, mean_hits REAL, no_coverage integer, rpkm integer, mean_reads REAL, median_hits integer, total_hits integer, max_hits integer, hit_sd REAL, express_fpkm integer, express_eff_counts REAL, express_tpm REAL , kangade_counts integer)"
+"CREATE TABLE expression_statistics_tmp (seq_md5hash char(32), readset_id integer, gene_length_coverage REAL, gene_length_coverage_mean REAL, no_coverage integer, rpkm integer, aligned_reads_per_base REAL, gene_length_coverage_median integer, total_aligned_reads integer, gene_length_coverage_max integer, gene_length_coverage_sd REAL, express_fpkm integer, express_eff_counts REAL, express_tpm REAL , kangade_counts integer)"
   );
   $dbh->do(
 "CREATE UNIQUE INDEX expression_statistics_tmp_idx1 ON expression_statistics_tmp(seq_md5hash,readset_id)"
@@ -1064,12 +1060,12 @@ sub sqlite_add_rpkm_expression_statistics($) {
 
 sub sqlite_add_main_expression_statistics($) {
  my (
-      $seq_md5hash, $readset,     $mean_hits, $no_coverage,
-      $mean_reads,  $median_hits, $max_hits,  $hit_sd
+      $seq_md5hash, $readset,     $gene_length_coverage_mean, $no_coverage,
+      $aligned_reads_per_base,  $gene_length_coverage_median, $gene_length_coverage_max,  $gene_length_coverage_sd, $gene_length_coverage
  ) = @_;
  $update_expression_statistics->execute(
-                           $mean_hits, $no_coverage, $mean_reads,  $median_hits,
-                           $max_hits,  $hit_sd,      $seq_md5hash, $readset );
+                           $gene_length_coverage, $gene_length_coverage_mean, $no_coverage, $aligned_reads_per_base,  $gene_length_coverage_median,
+                           $gene_length_coverage_max,  $gene_length_coverage_sd,      $seq_md5hash, $readset );
 }
 
 sub sqlite_add_express_expression_statistics() {
@@ -1233,12 +1229,14 @@ sub perform_checks_preliminary() {
      . " provided\n";
   }
   elsif (@use_existing_bam) {
-   confess "Cannot find user-provided BAM file $i ("
+   $use_existing_bam[$i] = abs_path($use_existing_bam[$i]) if $use_existing_bam[$i];
+   confess "Cannot find user-provided BAM file ("
      . $use_existing_bam[$i]
      . ") number "
      . ( $i + 1 ) . " for "
      . $readsets[$i] . "\n"
      unless $use_existing_bam[$i] && -s $use_existing_bam[$i];
+     #convert to full path
   }
  }
 
@@ -1487,7 +1485,7 @@ sub prepare_input_data() {
   open( FASTA, ">$file_to_align" ) || die($!);
 
   # create input file if user provided sequence on cmd line
-  my $reference_file = $input_reference_file;
+  my $reference_file = abs_path($input_reference_file);
   if ($user_ref_sequence) {
    $user_ref_sequence = ~s/^(>.+\\n)//;
    my $user_id = $1 ? $1 : ">query\n";
@@ -2967,14 +2965,15 @@ sub get_all_expression_data() {
   for ( my $i = 0 ; $i < scalar(@readsets) ; $i++ ) {
    my $readset_metadata_ref = &sqlite_get_readset_metadata( $readsets[$i] );
    my $readset_name         = $readset_metadata_ref->{'alias'};
-   my $hit_stat             = Statistics::Descriptive::Full->new();
    my $stats_ref =
      &sqlite_get_expression_statistics( $seq_md5hash, $readsets[$i] );
-   my $total_hit_reads =
-     $stats_ref->{'total_hits'} ? $stats_ref->{'total_hits'} : int(0);
+   my $total_aligned_reads =
+     $stats_ref->{'total_aligned_reads'} ? $stats_ref->{'total_aligned_reads'} : int(0);
    my $depth_hash_ref =
      &sqlite_get_depth_data( $seq_md5hash, $readsets[$i], 1 );
-   my $hit_median = $stats_ref->{'median_hits'};
+   my $gene_length_coverage_median = $stats_ref->{'gene_length_coverage_median'};
+   my $gene_length_coverage_mean = $stats_ref->{'gene_length_coverage_mean'};
+   my $gene_length_coverage = $stats_ref->{'gene_length_coverage'};
    if ( !$depth_hash_ref ) {
     warn "No depth data for $seq_id vs $readset_name. Skipping\n"
       if $debug;
@@ -2982,8 +2981,10 @@ sub get_all_expression_data() {
     next;
    }
    $expression_coverage_stats_hash{$seq_md5hash}{ $readsets[$i] } = {
-                                              'total_reads' => $total_hit_reads,
-                                              'median_hits' => $hit_median,
+                                              'total_reads' => $total_aligned_reads,
+                                              'gene_length_coverage' => $gene_length_coverage,
+                                              'gene_length_coverage_mean' => $gene_length_coverage_mean,
+                                              'gene_length_coverage_median' => $gene_length_coverage_median,
                                               'depth'       => $depth_hash_ref,
                                               'expression'  => $stats_ref
    };
@@ -3114,9 +3115,10 @@ sub make_coverage_graph($$$) {
    next
      if (   !$ref || !$ref->{'total_reads'}
           || $ref->{'total_reads'} < $binary_min_reads
-          || !$ref->{'median_hits'}
-          || $ref->{'median_hits'} == 0
-          || ( $median_cutoff && $ref->{'median_hits'} && $ref->{'median_hits'} < $median_cutoff ) );
+ #         || !$ref->{'gene_length_coverage_mean'}
+ #         || $ref->{'gene_length_coverage_mean'} == 0
+ #         || ( $process_cutoff && $ref->{'gene_length_coverage_mean'} && $ref->{'gene_length_coverage_mean'} < $process_cutoff )
+      );
    $gene_has_been_printed_before++;
   }
  }
@@ -3130,12 +3132,12 @@ sub make_coverage_graph($$$) {
     unless $expression_statistics_ref;
     
   my $mean =
-    $expression_statistics_ref->{'mean_hits'}
-    ? int( $expression_statistics_ref->{'mean_hits'} )
+    $expression_statistics_ref->{'gene_length_coverage_mean'}
+    ? int( $expression_statistics_ref->{'gene_length_coverage_mean'} )
     : int(0);
   my $median =
-    $expression_statistics_ref->{'median_hits'}
-    ? int( $expression_statistics_ref->{'median_hits'} )
+    $expression_statistics_ref->{'gene_length_coverage_median'}
+    ? int( $expression_statistics_ref->{'gene_length_coverage_median'} )
     : int(0);
   my $rpkm =
     $expression_statistics_ref->{'rpkm'}
@@ -3153,21 +3155,20 @@ sub make_coverage_graph($$$) {
       $expression_statistics_ref->{'express_eff_counts'}
     ? $expression_statistics_ref->{'express_eff_counts'}
     : int(0);
-  my $hit_sd = $expression_statistics_ref->{'hit_sd'};
+  my $gene_length_coverage_sd = $expression_statistics_ref->{'gene_length_coverage_sd'};
 
   my $pivot =
-      $expression_statistics_ref->{'median_hits'}
-    ? $expression_statistics_ref->{'median_hits'} - ( 2 * $hit_sd )
+      $expression_statistics_ref->{'gene_length_coverage_mean'}
+    ? $expression_statistics_ref->{'gene_length_coverage_mean'} - ( 2 * $gene_length_coverage_sd )
     : 1
-    if $hit_sd;
-  $pivot = $expression_statistics_ref->{'median_hits'}
-    if $expression_statistics_ref->{'median_hits'} && $pivot < 0;
-  my $stats_description = " mean: $mean median: $median Unnorm. RPKM: $rpkm";
+    if $gene_length_coverage_sd;
+  $pivot = $expression_statistics_ref->{'gene_length_coverage_mean'}
+    if $expression_statistics_ref->{'gene_length_coverage_mean'} && $pivot < 0;
+  my $stats_description = " RPKM: $rpkm";
   $stats_description .= " pivot: $pivot" if $pivot;
-  $stats_description .=
-" Effective FPKM: $express_fpkm Eff.TPM: $express_tpm Eff.counts: $effective_counts "
+  $stats_description .= " Effective FPKM: $express_fpkm Eff.TPM: $express_tpm Eff.counts: $effective_counts "
     if $expression_statistics_ref->{'express_fpkm'};
-  my $hit_max = $expression_statistics_ref->{'max_hits'};
+  my $gene_length_coverage_max = $expression_statistics_ref->{'gene_length_coverage_max'};
   
 
   my $readset_feature =
@@ -3180,11 +3181,11 @@ sub make_coverage_graph($$$) {
     );
 
   if (
-       $expression_statistics_ref->{'total_hits'}
+       $expression_statistics_ref->{'total_aligned_reads'}
        && (    $never_skip
             || $gene_has_been_printed_before
             || $median > 0
-            || $expression_statistics_ref->{'total_hits'} > 50 )
+            || $expression_statistics_ref->{'total_aligned_reads'} > 50 )
     )
   {
 
@@ -3215,7 +3216,7 @@ sub make_coverage_graph($$$) {
         xyplot         => $readset_feature,                               #work!
         -description   => 1,
         -label         => 1,
-        -max_score     => $hit_max ? $hit_max + ( $hit_max * 0.1 ) : 1,
+        -max_score     => $gene_length_coverage_max ? $gene_length_coverage_max + ( $gene_length_coverage_max * 0.1 ) : 1,
         -min_score     => 0,
         -bgcolor       => 'white',
         -fgcolor       => 'black',
@@ -3227,14 +3228,12 @@ sub make_coverage_graph($$$) {
         -bicolor_pivot => $pivot
    );
   }
-  elsif (    $expression_statistics_ref->{'total_hits'}
-          && !$expression_statistics_ref->{'median_hits'}
-          && $expression_statistics_ref->{'total_hits'} > 500 )
+  elsif (    $expression_statistics_ref->{'total_aligned_reads'}
+          && $expression_statistics_ref->{'total_aligned_reads'} > 500 )
   {
 
    #warn Dumper $expression_statistics_ref if $debug;
-   warn
-"Something really bad happened: maybe the statistics were not properly processed...\n";
+   warn "Something really bad happened: maybe the statistics were not properly processed...\n";
   }
   else {
    warn "No coverage of $seq_id ($seq_md5hash) vs $readset !\n"
@@ -3242,7 +3241,7 @@ sub make_coverage_graph($$$) {
    $graph->add_track(
           xyplot       => $readset_feature,                               #work!
           -description => 1,
-          -max_score   => $hit_max ? $hit_max + ( $hit_max * 0.1 ) : 1,
+          -max_score   => $gene_length_coverage_max ? $gene_length_coverage_max + ( $gene_length_coverage_max * 0.1 ) : 1,
           -min_score   => 0,
           -label       => 1,
           -bgcolor     => 'white',
@@ -3283,13 +3282,13 @@ sub process_main_stats($) {
  for ( my $i = 0 ; $i < scalar(@readsets) ; $i++ ) {
   my $readset_metadata_ref = &sqlite_get_readset_metadata( $readsets[$i] );
   my $readset_name         = $readset_metadata_ref->{'alias'};
-  my $hit_stat             = Statistics::Descriptive::Full->new();
+  my $gene_length_coverage_stat             = Statistics::Descriptive::Full->new();
   my $stats_ref =
     &sqlite_get_expression_statistics( $seq_md5hash, $readsets[$i] );
   my $rpkm = $stats_ref->{'rpkm'} ? $stats_ref->{'rpkm'} : int(0);
-  my $total_hit_reads =
-    $stats_ref->{'total_hits'} ? $stats_ref->{'total_hits'} : int(0);
-  my ( $no_bp_covered, @hits );
+  my $total_aligned_reads =
+    $stats_ref->{'total_aligned_reads'} ? $stats_ref->{'total_aligned_reads'} : int(0);
+  my ( $no_bp_covered, @gene_length_coverages );
   my $depth_hash_ref_compressed =
     &sqlite_get_depth_data( $seq_md5hash, $readsets[$i], 1 );
 
@@ -3307,37 +3306,42 @@ sub process_main_stats($) {
        $depth_hash_ref->{$pos}
      ? $depth_hash_ref->{$pos}
      : int(0);
-   push( @hits, $depth );
+   push( @gene_length_coverages, $depth );
    $no_bp_covered++ if $depth == 0;
   }
-  $hit_stat->add_data( \@hits );
-  my $hit_median = $hit_stat->median() ? $hit_stat->median() : int(0);
-  my $hit_sd =
-    $hit_stat->standard_deviation()
-    ? sprintf( "%.2f", $hit_stat->standard_deviation() )
+  $gene_length_coverage_stat->add_data( \@gene_length_coverages );
+ 
+ my $gene_length_coverage_median = $gene_length_coverage_stat->median() ? $gene_length_coverage_stat->median() : int(0);
+  my $gene_length_coverage_sd =
+    $gene_length_coverage_stat->standard_deviation()
+    ? sprintf( "%.2f", $gene_length_coverage_stat->standard_deviation() )
     : int(0);
-  my $hit_mean =
-    $hit_stat->mean() ? sprintf( "%.2f", $hit_stat->mean() ) : int(0);
-  my $hit_max = $hit_stat->max() ? $hit_stat->max() : int(0);
-  my $mean_reads =
-    $total_hit_reads
-    ? sprintf( "%.2f", ( $total_hit_reads / $seq_size ) )
+  my $gene_length_coverage_mean =
+    $gene_length_coverage_stat->mean() ? sprintf( "%.2f", $gene_length_coverage_stat->mean() ) : int(0);
+  my $gene_length_coverage_max = $gene_length_coverage_stat->max() ? $gene_length_coverage_stat->max() : int(0);
+  my $aligned_reads_per_base =
+    $total_aligned_reads
+    ? sprintf( "%.2f", ( $total_aligned_reads / $seq_size ) )
     : int(0);
-
   $readsets_covered++;
-  my $coverage =
+  my $gene_length_coverage =
     sprintf( "%.2f", ( ( $seq_size - $no_bp_covered ) / $seq_size ) );
+
   &sqlite_add_main_expression_statistics(
-                         $seq_md5hash, $readsets[$i], $hit_mean, $no_bp_covered,
-                         $mean_reads,  $hit_median,   $hit_max,  $hit_sd );
-  print STATS
-"$seq_md5hash\t$readset_name\t$seq_id\t$rpkm\t$hit_mean\t$hit_sd\t$hit_median\t$hit_max\t$total_hit_reads\t$coverage\n";
+                         $seq_md5hash, $readsets[$i], $gene_length_coverage_mean, $no_bp_covered,
+                         $aligned_reads_per_base,  $gene_length_coverage_median,   $gene_length_coverage_max,  $gene_length_coverage_sd, $gene_length_coverage );
+
+  print STATS "$seq_md5hash\t$readset_name\t$seq_id\t$rpkm\t$gene_length_coverage_mean\t"
+	."$gene_length_coverage_sd\t$gene_length_coverage_median\t$gene_length_coverage_max\t"
+	."$total_aligned_reads\t$gene_length_coverage\n";
 
   if ( !$only_alignments ) {
     $stats_ref =
      &sqlite_get_expression_statistics( $seq_md5hash, $readsets[$i] );
    $expression_coverage_stats_hash{$seq_md5hash}{ $readsets[$i] } = {
-                                          'median_hits' => $hit_median,
+                                          'gene_length_coverage' => $gene_length_coverage,
+                                          'gene_length_coverage_mean' => $gene_length_coverage_mean,
+                                          'gene_length_coverage_median' => $gene_length_coverage_median,
                                           'depth' => $depth_hash_ref_compressed,
                                           'expression' => $stats_ref
    };
@@ -3355,7 +3359,6 @@ sub process_main_stats($) {
   $skipped_references{$seq_md5hash} = 1;
   return;
  }
-
 }
 
 sub print_binary_table() {
@@ -3369,27 +3372,27 @@ sub print_binary_table() {
   chomp($ln);
   my (
        $seq_md5hash,     $readset_name, $seq_id,     $rpkm,
-       $hit_mean,        $hit_sd,       $hit_median, $hit_max,
-       $total_hit_reads, $coverage
+       $gene_length_coverage_mean,        $gene_length_coverage_sd,       $gene_length_coverage_median, $gene_length_coverage_max,
+       $total_aligned_reads, $gene_length_coverage
   ) = split( "\t", $ln );
 
   # designate as not expressed:
-  if (   !$coverage
-       || $hit_median == 0
-       || ( $median_cutoff && $hit_median < $median_cutoff ) )
+  if (   !$gene_length_coverage || $gene_length_coverage == 0
+   #    || $gene_length_coverage_mean == 0
+   #    || ( $process_cutoff && $gene_length_coverage_mean < $process_cutoff )
+    )
   {
    print LOG
-"Median depth of coverage of $seq_id vs $readset_name didn't pass cutoff or was zero ($hit_median). Skipping\n";
+"Gene coverage of $seq_id vs $readset_name was not available or was zero ($gene_length_coverage). Skipping\n";
    warn
-"Median depth of coverage of $seq_id vs $readset_name didn't pass cutoff or was zero ($hit_median). Skipping\n"
+"Gene coverage of $seq_id vs $readset_name was not available or was zero ($gene_length_coverage). Skipping\n"
      if $debug;
    next;
   }
 
-  $binary_table{$seq_md5hash}{'exists'} = 1
-    if !$binary_table{$seq_md5hash}{'exists'};
-  if ( $total_hit_reads >= $binary_min_reads ) {
-   if ( $coverage >= $binary_min_coverage ) {
+  $binary_table{$seq_md5hash}{'exists'} = 1  if !$binary_table{$seq_md5hash}{'exists'};
+  if ( $total_aligned_reads >= $binary_min_reads ) {
+   if ( $gene_length_coverage >= $binary_min_coverage ) {
     $binary_table{$seq_md5hash}{$readset_name} = 1;
    }
   }
@@ -3453,7 +3456,7 @@ sub process_expression_level() {
    my $readset_name_C     = $readset_metadata_C->{'alias'};
    my $stats_ref_C =
      &sqlite_get_expression_statistics( $seq_md5hash, $readsets[$i] );
-   $stats_ref_C->{'total_hits'}   = int(0) if !$stats_ref_C->{'total_hits'};
+   $stats_ref_C->{'total_aligned_reads'}   = int(0) if !$stats_ref_C->{'total_aligned_reads'};
    $stats_ref_C->{'express_fpkm'} = int(0) if !$stats_ref_C->{'express_fpkm'};
    $stats_ref_C->{'express_eff_counts'} = int(0)
      if !$stats_ref_C->{'express_eff_counts'};
@@ -3469,7 +3472,7 @@ sub process_expression_level() {
    print OUT $seq_md5hash . "\t" 
      . $seq_id . "\t"
      . $readset_name_C . "\t"
-     . $stats_ref_C->{'total_hits'} . "\t"
+     . $stats_ref_C->{'total_aligned_reads'} . "\t"
      . $stats_ref_C->{'rpkm'} . "\t"
      . $stats_ref_C->{'express_fpkm'} . "\t"
      . $stats_ref_C->{'express_tpm'} . "\t"
@@ -3485,7 +3488,7 @@ sub process_expression_level() {
      my $readset_name_E     = $readset_metadata_E->{'alias'};
      my $stats_ref_E =
        &sqlite_get_expression_statistics( $seq_md5hash, $readsets[$k] );
-     $stats_ref_E->{'total_hits'} = int(0) if !$stats_ref_E->{'total_hits'};
+     $stats_ref_E->{'total_aligned_reads'} = int(0) if !$stats_ref_E->{'total_aligned_reads'};
      $stats_ref_E->{'express_eff_counts'} = int(0)
        if !$stats_ref_E->{'express_eff_counts'};
      $stats_ref_E->{'express_fpkm'} = int(0)
@@ -3653,7 +3656,7 @@ sub process_housekeeping_stats() {
 
 sub process_completion() {
 
-# N.B. Remember: R/FPKM is for looking at differences between libraries and mean/median_hits for looking at differences within a library.
+# N.B. Remember: R/FPKM is for looking at differences between libraries and mean/gene_length_coverage_median for looking at differences within a library.
 # RPKM is appropriate for Single-End libraries and FPKM for Paired-End libraries
  my $elapsed = $total_timer->report("%L");
  print "\nCompleted in $elapsed!\n";
