@@ -12,6 +12,7 @@ If you are having issues, after you install Bio::Graphics do (as root or sudo un
 updatedb && locate Bio/Graphics/Glyph/xyplot.pm
 patch Bio/Graphics/Glyph/xyplot.pm patch.biographics.diff
 
+This fixes a fatal error when trying to make SVG XY plot graphics 
 
 
 == For people using intel compilers:
