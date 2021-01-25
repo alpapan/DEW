@@ -2551,21 +2551,21 @@ sub align_bwa() {
  if ( $read_format eq 'fastq' ) {
   my $qformat = ( &check_fastq_format($readset) eq 'phred33' ) ? ' ' : '-I';
   &process_cmd(
-"$bwa_exec aln $qformat -t $threads -f $baseout.sai -q 10 $file_to_align $readset 2>/dev/null"
+"$bwa_exec aln -e -1 -E 6 -q 20 -L $qformat -t $threads -f $baseout.sai $file_to_align $readset 2>/dev/null"
   ) unless -s "$baseout.sai";
   if ($readset2) {
    &process_cmd(
-"$bwa_exec aln $qformat -t $threads -f $baseout.2.sai -q 10 $file_to_align $readset2 2>/dev/null"
+"$bwa_exec aln -e -1 -E 6 -q 20 -L $qformat -t $threads -f $baseout.2.sai -q 10 $file_to_align $readset2 2>/dev/null"
    ) unless -s "$baseout.2.sai";
   }
  }
  elsif ( $read_format eq 'bam' ) {
   &process_cmd(
-"$bwa_exec aln -t $threads -b -f $baseout.sai -q 10 $file_to_align $readset 2>/dev/null"
+"$bwa_exec aln -e -1 -E 6 -q 20 -L -t $threads -b -f $baseout.sai -q 10 $file_to_align $readset 2>/dev/null"
   ) unless -s "$baseout.sai";
   if ($readset2) {
    &process_cmd(
-"$bwa_exec aln -t $threads -b -f $baseout.2.sai -q 10 $file_to_align $readset2 2>/dev/null"
+"$bwa_exec aln -e -1 -E 6 -q 20 -L -t $threads -b -f $baseout.2.sai -q 10 $file_to_align $readset2 2>/dev/null"
    ) unless -s "$baseout.2.sai";
   }
  }
@@ -2576,7 +2576,7 @@ sub align_bwa() {
  $readgroup =~ s/\.bam$//;
  if ($readset2) {
   &process_cmd(
-"$bwa_exec sampe -n 20 -N 100 -a 700 -s -r '$readgroup' -o $sam $file_to_align $baseout.sai $baseout.2.sai $readset $readset2 2>/dev/null"
+"$bwa_exec sampe -n 20 -N 100 -a 900 -s -r '$readgroup' -o $sam $file_to_align $baseout.sai $baseout.2.sai $readset $readset2 2>/dev/null"
   );
   unlink("$baseout.sai");
   unlink("$baseout.2.sai");
