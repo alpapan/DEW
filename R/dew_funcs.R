@@ -30,7 +30,12 @@ dew_install_lib = function(lib,is_bioconductor=0){
 		if(require(lib, character.only = TRUE,quietly=T,warn.conflicts=F )){
 			cat(paste('Library ',lib," installed and loaded","\n",sep=''))
 		} else {
-			stop(c("Could not install ",lib,"\n"))
+			install.packages(lib, repos="http://R-Forge.R-project.org")
+			if(require(lib, character.only = TRUE,quietly=T,warn.conflicts=F )){
+				cat(paste('Library ',lib," installed and loaded","\n",sep=''))
+			} else {
+				stop(c("Could not install ",lib,"\n"))
+			}
 		}
 	}
 }
@@ -302,7 +307,6 @@ print_statistics_normalized = function(statsfile){
 
 # TODO split between those with reps and without reps
 edgeR_DE_explore = function (genesaliases_file, targetsFile, baseout='tmp', dispersion='auto', FDR=0.05,kclusters = 10,minCPM = 2,minLibs = 1){
-	#genesaliases_file='/databases/owner/pap056/rna/wei_only_results/wei_only.toalign.md5';targetsFile='/databases/owner/pap056/rna/wei_only_results//edgeR/HaGR01_vs_HaGR16.edgeR_target.files'; baseout='tmp'; dispersion=0.4; FDR=0.05;kclusters = 10;minCPM = 2;minLibs = 1
 	
 	library(Biobase,quietly=T,warn.conflicts=F,verbose=F)
 	library(edgeR,quietly=T,warn.conflicts=F,verbose=F)
