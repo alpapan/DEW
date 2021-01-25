@@ -101,6 +101,7 @@ test times:
             -output or -uid    :s   => A uid for naming output files. Optional, otherwise generate
             -threads :i             => Number of CPUs to use for alignment. BWA has no advantage over 4 threads
             -library_name_file :s   => An tag value tab delimited file for giving a friendly alias for each readset library. Needs a header line to describe columns ("file" and "name" in that order). Only include -1read files.
+	    -sample_names    :s{,}  => A list of names to assign to the samples. Only if a -library_name_file is not provided. Must be same order/number as -readsets
             -need_all_readsets      => All sets of reads must have alignments against the gene in order for it to be processed. Otherwise, 1+ is sufficient. 
             -over                   => Allow overwriting of any files with the same name
             -nographs               => Do not produce any graphs. Graphs can take a very long time when there are many readsets (e.g. 30+ libraries and 30k+ genes).
@@ -243,7 +244,7 @@ my (
      $md5_aliases_file,        $remove_redund,
      $kangade_exec,            $kangax_exec,
      $existing_bam_is_coordsorted,
-     $kanga_exec, %gene_aliases_threads
+     $kanga_exec, %gene_aliases_threads, $do_galaxy_cleanup, @sample_names
 );
 
 my $db_hostname = 'localhost';
@@ -296,6 +297,7 @@ my (
 my $given_cmd = $0 . " " . join( " ", @ARGV );
 
 pod2usage $! unless GetOptions(
+ 'do_galaxy_cleanup' => \$do_galaxy_cleanup, # delete EVERYTHING EXCEPT PDF AND TSV and sqlite
  'nocheck|no_check'      => \$no_checks,            #TMP for Debug; should not be needed
  'infile:s'      => \$input_reference_file,
  'extra_genes:s' => \$extra_genes,
@@ -314,6 +316,7 @@ pod2usage $! unless GetOptions(
  'outdir:s'                  => \$main_output_dir,
  'threads:i'                 => \$threads,
  'alias|library_name_file:s' => \$lib_alias_file,
+ 'sample_names:s{,}'        => \@sample_names,
  'prepare_only'              => \$prepare_input_only,
  'need_all_readsets'         => \$demand_all_readsets,
  'over'                      => \$overwrite_results,
@@ -323,7 +326,7 @@ pod2usage $! unless GetOptions(
  'seeddb:s'                  => \$initial_db,
  'contextual'                => \$contextual_alignment,
  'correct_bias|isoforms'     => \$perform_bias_correction,
- 'bwa'                       => \$use_bwa,
+ 'use_bwa'                   => \$use_bwa,
  'kanga'                     => \$use_kanga,
  'existing_aln:s{1,}'        => \@use_existing_bam,
  'coord_existing'        => \$existing_bam_is_coordsorted,
@@ -1179,8 +1182,8 @@ sub perform_checks_preliminary() {
  pod2usage "No input\n"
    unless (    ( $input_reference_file && -s $input_reference_file )
             || ( $user_ref_sequence && length($user_ref_sequence) > 100 ) );
- pod2usage "Insufficient readsets (need at least 1!)\n"
-   unless @readsets && scalar(@readsets) > 0;
+ pod2usage "Insufficient readsets (need at least 2!)\n"
+   unless @readsets && scalar(@readsets) > 1;
 
  # biokanga:
  if ( $biokanga_exec && -x $biokanga_exec ) {
@@ -1351,8 +1354,7 @@ sub prepare_library_alias() {
   chomp($header);
   my @headers = split( "\t", $header );
   my $original_header_number = scalar(@headers);
-  die
-"Library alias ($lib_alias_file) must have 'file' and 'name' as the first two columns."
+  die "Library alias ($lib_alias_file) must have 'file' and 'name' as the first two columns."
     . " The other columns are free to be any kind of metadata."
     . " Also the special metadata column 'group' is used for differential expression."
     unless $headers[0] eq 'file' && $headers[1] eq 'name';
@@ -1385,6 +1387,7 @@ sub prepare_library_alias() {
       . $data[0]
       . " has no name entry. Will use basename of filename\n";
     $data[1] = fileparse( $data[0] );
+
    }
 
    $data[1] =~ s/\W+/_/g;
@@ -1397,6 +1400,7 @@ sub prepare_library_alias() {
      . $data[1]
      . ") cannot have the ^ hat/carrot symbol\n"
      if $data[1] =~ /^\d+/;
+
    $library_aliases{ $data[0] } = $data[1];
    if ( $data[2] ) {
     for ( my $i = 2 ; $i < @data ; $i++ ) {
@@ -1425,28 +1429,26 @@ sub prepare_library_alias() {
   close IN;
  }
  else {
+  # there is no lib_alias. make one
   $print = "file\tname\tgroup\n";
-  foreach my $readset (@readsets) {
-   $library_aliases{$readset} = fileparse($readset);
-   $library_metadata{$readset}{'group'} = fileparse($readset);
-   $groups_readsets{$readset}{$readset}++;
-   $print .=
-       $readset . "\t"
-     . $library_aliases{$readset} . "\t"
-     . $library_metadata{$readset}{'group'} . "\n";
-  }
  }
- foreach my $readset (@readsets) {
-  unless ( $library_metadata{$readset} || $library_aliases{$readset} ) {
-   warn "Warn: Readset $readset has no library metadata entry\n";
-   $library_aliases{$readset} = fileparse($readset);
-   $library_metadata{$readset}{'group'} = fileparse($readset);
-   $groups_readsets{$readset}{$readset}++;
+
+ #some checks if there is a readset without data.
+  for (my $r=0;$r<scalar(@readsets);$r++){
+   my $readset=$readsets[$r];
+   if ($library_aliases{ $readset }){
+	$sample_names[$r] = $library_aliases{ $readset };
+   }elsif(!$sample_names[$r]){
+	$sample_names[$r] = fileparse($readset);
+   }
+   $library_aliases{$readset} = $sample_names[$r];
+   $library_metadata{$sample_names[$r]}{'group'} = $sample_names[$r];
+   $groups_readsets{$library_metadata{$sample_names[$r]}{'group'}}{$sample_names[$r]} =$edgeR_dir . $sample_names[$r] . '.dat';;
+
    $print .=
        $readset . "\t"
-     . $library_aliases{$readset} . "\t"
-     . $library_metadata{$readset}{'group'} . "\n";
-  }
+     . $library_aliases{$sample_names[$r]} . "\t"
+     . $library_metadata{$sample_names[$r]}{'group'} . "\n";
  }
  if ($print) {
   open( OUT, ">$result_dir/lib_alias.txt" );
@@ -1626,7 +1628,8 @@ sub prepare_input_data() {
   }
  }
  elsif (@use_existing_bam) {
-  print "Will use user-provided BAM (read-name sorted) files\n";
+  print "Will use user-provided BAM (read-name sorted) files\n" if !$existing_bam_is_coordsorted;
+  print "Will use user-provided BAM (coordinate sorted) files\n" if $existing_bam_is_coordsorted;
  }
  else {
   unless ( -s "$file_to_align.1.bt2" ) {
@@ -1656,7 +1659,7 @@ sub starts_alignments() {
    . "Starting alignments against up to "
    . scalar(@readsets)
    . " readsets\n";
- print "\tChecking for completed alignments...\n";
+ print "\tChecking database for completed alignments...\n";
  my $todo;
  ## This is very slow as it checks every readset?
  for ( my $i = 0 ; $i < (@readsets) ; $i++ ) {
@@ -1703,10 +1706,11 @@ sub starts_alignments() {
     my $alnbase = $baseout . '_vs_' . $readset_basename;
     $alignment_bam_file = $alnbase . '.bam';
     $alignment_sam_file = $alnbase . '.sam';
+    die "Supposedly existing alignment $alignment_bam_file does not exist. Any chance you're using an old database?\n" unless -s $alignment_bam_file;
     my $express_results = $alignment_bam_file . ".express.results";
     &process_express_bias( $express_results, $readset );
    }
-   elsif (@use_existing_bam) {    # name sorted
+   elsif (@use_existing_bam) {    #name or coord sorted
     ( $alignment_bam_file, $alignment_sam_file ) =
       &prepare_alignment_from_existing( $file_to_align, $i );
    }
@@ -1829,9 +1833,9 @@ sub prepare_alignment_from_existing() {
  my $alignment_sam_file = $alnbase . '.sam';    # reference sorted
  my $alignment_bam_file = $alnbase . '.bam';    # reference sorted
  print "\n\n" . &mytime
-   . "Aligning: Using user-provided alignment for $readset_basename\n";
+   . "Aligning: Using user-provided alignment ".$use_existing_bam[$i]." for $readset_basename\n";
  print LOG "\n" . &mytime
-   . "Aligning: Using user-provided alignment for $readset_basename\n";
+   . "Aligning: Using user-provided alignment ".$use_existing_bam[$i]." for $readset_basename\n";
 
  if (!$existing_bam_is_coordsorted){
  # namesorted bam
@@ -3673,6 +3677,17 @@ sub process_completion() {
   }
  }
  print "\n";
+
+ if ($do_galaxy_cleanup){
+	my @files = `find $result_dir -type f`;
+	chomp(@files);
+	foreach my $f (@files){
+		next if ($f=~/\.pdf$/ || $f=~/\.tsv$/);
+		unlink($f);
+	}
+
+ }
+
  exit(0);
 }
 
@@ -3722,7 +3737,6 @@ sub perform_TMM_normalization_edgeR() {
   }
   undef(@readsets_from_matrix);
   @readsets_from_matrix = keys %readset_R_filenames;
-
 # estimate norm. factors; the fpkm is produced for the user but we are not going to use it for edgeR (we will not transform)
   &run_TMM( \%readset_R_filenames, $TMM_file );
  }
@@ -4271,7 +4285,6 @@ sub prepare_for_dge() {
 }
 
 sub run_TMM {
-
  #from b.haas
  # second column is group and taken from $library_metadata{$name}{'group' }
  # my $readset_name         = $readset_metadata_ref->{'alias'};
@@ -4279,6 +4292,7 @@ sub run_TMM {
  my $data_file_list = $edgeR_dir . "all_data_files.list";
  open( OUT1, ">$data_file_list" ) || die($!);
  print OUT1 "files\tgroup\tdescription\n";
+
  foreach my $name ( keys %{$readset_R_filenames_href} ) {
   my $R_filename = $readset_R_filenames_href->{$name};
   print OUT1 join( "\t", $R_filename, $library_metadata{$name}{'group'}, $name )
@@ -4317,7 +4331,7 @@ sub run_edgeR {
 #        local_stat<-test["Pr(>F)"][2,1];
  my ( $group_A, $group_B ) = @_;
  my $base        = $edgeR_dir . $group_A . '_vs_' . $group_B . ".edgeR";
- print &mytime." Group $group_A vs: $group_B as $base                                       \r";
+ print &mytime." Group $group_A vs: $group_B as $base\n";
  my $R_script    = $base . "_run.R";
  my $target_file = $base . "_target.files";
 
@@ -4354,6 +4368,7 @@ sub run_edgeR {
    );
  unlink($R_script)    unless $debug;
  unlink($target_file) unless $debug;
+ print "\n";
 }
 
 sub write_normalized_effective_file {
