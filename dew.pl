@@ -314,7 +314,7 @@ pod2usage $! unless GetOptions(
 
  'out|output|uid:s'          => \$uid,
  'outdir:s'                  => \$main_output_dir,
- 'threads:i'                 => \$threads,
+ 'threads|cpus:i'            => \$threads,
  'alias|library_name_file:s' => \$lib_alias_file,
  'sample_names:s{,}'        => \@sample_names,
  'prepare_only'              => \$prepare_input_only,
@@ -382,6 +382,8 @@ if ($sort_version=~/^sort \(GNU coreutils\) (\d+)/){
    $sort_memory_exec .=  " --parallel=$sort_threads" if ($1 && $1 >= 8);
    $sort_memory_sub .= " --parallel=$sort_threads_sub" if ($1 && $1 >= 8);
 }
+# parallelise alignments; each alignment uses 2 threads
+my $alignment_thread_helper = new Thread_helper(int($threads/2));
 
 my $samtools_threads = $threads > 5 ? 5 : $threads;
 my $sam_sort_memory = int($sort_memory / $samtools_threads); 
@@ -1693,31 +1695,71 @@ sub starts_alignments() {
  # testing
  return if ( !$todo && $no_checks );
  my ( %alignment_sam_files, %alignment_bam_files, $aligned_ids_hashref, %hash );
+
+ if ($use_bwa){
+	&align_bwa_index($file_to_align);
+ }elsif ($use_kanga) {
+	&align_kanga_index($file_to_align);
+ }else{
+	&align_bowtie2_index($file_to_align);
+ }
+
  if ($contextual_alignment) {
+  for ( my $i = 0 ; $i < (@readsets) ; $i++ ) {
+   my $readset          = $readsets[$i];
+   my $readset_basename = fileparse($readset);
+
+   my $baseout       = $file_to_align;
+   $baseout =~ s/.toalign$//;
+   $baseout .= '_vs_' . $readset_basename;
+
+   my $alignment_bam_file = $baseout . '.bam';
+   my $alignment_sam_file = $baseout . '.sam';
+   my $express_results = $alignment_bam_file . ".express.results";
+
+   if ( $already_done_alignments{$readset} ) {
+    die "Supposedly existing alignment $alignment_bam_file does not exist. Any chance you're using an old database?\n" unless -s $alignment_bam_file;
+    &process_express_bias( $express_results, $readset );
+   }
+   elsif (@use_existing_bam) {    #name or coord sorted
+      &prepare_alignment_from_existing( $file_to_align, $i,  $baseout, $alignment_bam_file, $alignment_sam_file  );
+   }
+   else {
+    my $thread = threads->create('prepare_alignment',$file_to_align, $i , $baseout, $alignment_bam_file, $alignment_sam_file );
+    $alignment_thread_helper->add_thread($thread);
+#    &prepare_alignment( $file_to_align, $i , $baseout, $alignment_bam_file, $alignment_sam_file );
+   }
+  }
+
+  # All alignments are done but they have not been processed yet.
+  $alignment_thread_helper->wait_for_all_threads_to_complete();
+
+  # the following cannot be threaded readily due to DB operations
+
   for ( my $i = 0 ; $i < (@readsets) ; $i++ ) {
    print "    Processing "
      . ( $i + 1 ) . " of "
      . scalar(@readsets)
      . " readsets                                         \r";
+
    my $readset          = $readsets[$i];
+   my $readset2 = $readsets2[$i] if $readsets2[$i];
    my $readset_basename = fileparse($readset);
-   my ( $alignment_bam_file, $alignment_sam_file );
-   if ( $already_done_alignments{$readset} ) {
-    my $alnbase = $baseout . '_vs_' . $readset_basename;
-    $alignment_bam_file = $alnbase . '.bam';
-    $alignment_sam_file = $alnbase . '.sam';
-    die "Supposedly existing alignment $alignment_bam_file does not exist. Any chance you're using an old database?\n" unless -s $alignment_bam_file;
-    my $express_results = $alignment_bam_file . ".express.results";
-    &process_express_bias( $express_results, $readset );
-   }
-   elsif (@use_existing_bam) {    #name or coord sorted
-    ( $alignment_bam_file, $alignment_sam_file ) =
-      &prepare_alignment_from_existing( $file_to_align, $i );
-   }
-   else {
-    ( $alignment_bam_file, $alignment_sam_file ) =
-      &prepare_alignment( $file_to_align, $i );
-   }
+
+   my $baseout       = $file_to_align;
+   $baseout =~ s/.toalign$//;
+   $baseout .= '_vs_' . $readset_basename;
+
+   my $alignment_bam_file = $baseout . '.bam';
+   my $alignment_sam_file = $baseout . '.sam';
+   my $express_results = $alignment_bam_file . ".express.results";
+   my ($rpkm_hashref, $eff_counts_hashref);
+
+   ($alignment_bam_file, $rpkm_hashref, $eff_counts_hashref ) = &perform_correct_bias( $alignment_bam_file, $file_to_align, $readset, $alignment_bam_file . '.namesorted' )
+   if ($perform_bias_correction);
+
+   &process_alignments( $alignment_bam_file, $readset, $readset2 ) if $readset2;
+   &process_alignments( $alignment_bam_file, $readset ) if !$readset2;
 
    next if $only_alignments || ($resume && -s $alignment_bam_file . ".depth.completed");
    $aligned_ids_hashref =
@@ -1784,14 +1826,29 @@ sub starts_alignments() {
   if ( -s $new_file_to_align ) {
    for ( my $i = 0 ; $i < (@readsets) ; $i++ ) {
 
+   my $readset          = $readsets[$i];
+   my $readset2 = $readsets2[$i] if $readsets2[$i];
+   my $readset_basename = fileparse($readset);
+   my $baseout       = $new_file_to_align;
+   $baseout =~ s/.toalign$//;
+   $baseout .= '_vs_' . $readset_basename;
+   my $alignment_bam_file = $baseout . '.bam';
+   my $alignment_sam_file = $baseout . '.sam';
+   my ($rpkm_hashref, $eff_counts_hashref);
+
     #  print '.' x ( $i + 1 ) . "\r";
     print "\tProcessing "
       . ( $i + 1 )
       . " out of "
       . scalar(@readsets)
       . " readsets                \r";
-    my ( $alignment_bam_file, $alignment_sam_file ) =
-      &prepare_alignment( $new_file_to_align, $i );
+      &prepare_alignment( $new_file_to_align, $i , $baseout, $alignment_bam_file, $alignment_sam_file );
+
+   ($alignment_bam_file, $rpkm_hashref, $eff_counts_hashref ) = &perform_correct_bias( $alignment_bam_file, $file_to_align, $readset, $alignment_bam_file . '.namesorted' )
+   if ($perform_bias_correction);
+
+   &process_alignments( $alignment_bam_file, $readset, $readset2 ) if $readset2;
+   &process_alignments( $alignment_bam_file, $readset ) if !$readset2;
 
     next if $only_alignments  || ($resume && -s $alignment_bam_file . ".depth.completed");
 
@@ -1820,9 +1877,7 @@ sub starts_alignments() {
 }
 
 sub prepare_alignment_from_existing() {
- my ( $file_to_align, $i ) = @_;
- my $baseout = $file_to_align;
- $baseout =~ s/.toalign$//;
+ my ( $file_to_align, $i, $baseout, $alignment_bam_file,  $alignment_sam_file ) = @_;
  confess "Given BAM alignment file does not exist: "
    . $use_existing_bam[$i] . "\n"
    unless $use_existing_bam[$i] && -s $use_existing_bam[$i];
@@ -1830,8 +1885,6 @@ sub prepare_alignment_from_existing() {
  my $readset2         = $readsets2[$i];
  my $readset_basename = fileparse($readset);
  my $alnbase          = $baseout . '_vs_' . $readset_basename;
- my $alignment_sam_file = $alnbase . '.sam';    # reference sorted
- my $alignment_bam_file = $alnbase . '.bam';    # reference sorted
  print "\n\n" . &mytime
    . "Aligning: Using user-provided alignment ".$use_existing_bam[$i]." for $readset_basename\n";
  print LOG "\n" . &mytime
@@ -1876,35 +1929,14 @@ sub prepare_alignment_from_existing() {
  }
 
    
- &perform_correct_bias( $alignment_bam_file, $file_to_align, $readset,
-                        $alignment_bam_file . '.namesorted' )
-   if ($perform_bias_correction);
-
- return if $only_alignments;
-
- &process_alignments( $alignment_bam_file, $readset, $readset2 );
- return ( $alignment_bam_file, $alignment_sam_file );
 }
 
 sub prepare_alignment() {
- my ( $file_to_align, $i ) = @_;
+ my ( $file_to_align, $i, $baseout, $alignment_bam_file, $alignment_sam_file ) = @_;
  my $readset  = $readsets[$i];
  my $readset2 = $readsets2[$i];
- my ( $rpkm_hashref,       $eff_counts_hashref );
- my ( $alignment_bam_file, $alignment_sam_file ) =
-   &perform_alignments( $file_to_align, $readset, $readset2 );
+ &perform_alignments( $file_to_align, $readset, $readset2, $baseout, $alignment_bam_file, $alignment_sam_file );
 
- return ( $alignment_bam_file, $alignment_sam_file ) if $only_alignments;
-
- ( $alignment_bam_file, $rpkm_hashref, $eff_counts_hashref ) =
-   &perform_correct_bias( $alignment_bam_file, $file_to_align, $readset,
-                          $alignment_sam_file . '.namesorted' )
-   if ($perform_bias_correction);
-
- 
-
- &process_alignments( $alignment_bam_file, $readset, $readset2 );
- return ( $alignment_bam_file, $alignment_sam_file );
 }
 
 sub perform_alignments() {
@@ -1912,15 +1944,14 @@ sub perform_alignments() {
  my $readset          = shift;
  my $readset_basename = fileparse($readset);
  my $readset2         = shift;
+ my $baseout = shift;
+ my $bam = shift;
+ my $sam = shift;
+
  print "\n" . &mytime
    . "Aligning: Performing alignments of $file_to_align vs $readset_basename\n";
  my $readset_time  = stat($readset)->mtime;
  my $readset2_time = $readset2 ? stat($readset2)->mtime : int(0);
- my $baseout       = $file_to_align;
- $baseout =~ s/.toalign$//;
- $baseout .= '_vs_' . $readset_basename;
- my $bam = $baseout . '.bam';
- my $sam = $baseout . '.sam';
  print LOG &mytime . "Processing $readset as $bam\n";
 
  # check if alignments need to be recalculated
@@ -2378,14 +2409,18 @@ sub median() {
  return $sorted[ int( @sorted / 2 ) ];
 }
 
-sub align_bowtie2() {
- my ( $baseout, $file_to_align, $readset, $readset2, $bam, $sam ) = @_;
- my $build_exec = $bowtie2_exec . '-build';
+sub align_bowtie2_index(){
+ my $file_to_align = shift;
  unless ( -s "$file_to_align.1.bt2" ) {
   print "\t\t\tBuilding reference file for bowtie...\r";
-  &process_cmd("$build_exec --offrate 1 $file_to_align $file_to_align >/dev/null 2>> $result_dir/$uid.log"  );
+  &process_cmd("$bowtie2_exec -build --offrate 1 $file_to_align $file_to_align >/dev/null 2>> $result_dir/$uid.log"  );
   print " Done!\n";
  }
+
+}
+
+sub align_bowtie2() {
+ my ( $baseout, $file_to_align, $readset, $readset2, $bam, $sam ) = @_;
  my $readgroup = '@RG\tID:' . $readset;
  $readgroup =~ s/\.bz2$//;
  $readgroup =~ s/\.fastq$//;
@@ -2394,11 +2429,11 @@ sub align_bowtie2() {
   if ( $read_format eq 'fastq' ) {
    my $qformat = &check_fastq_format($readset);
    if ($qformat eq 'fasta'){
-   	&process_cmd("$bowtie2_exec --reorder -a -f --threads $threads --rdg 6,5 --rfg 6,5 --score-min L,-0.6,-0.4 --no-discordant -X $fragment_max_length --no-mixed --no-unal -x $file_to_align -1 $readset -2 $readset2 -S $sam 2> $baseout.log"   ) unless -s $sam;
+   	&process_cmd("$bowtie2_exec --reorder -a -f --threads 2 --rdg 6,5 --rfg 6,5 --score-min L,-0.6,-0.4 --no-discordant -X $fragment_max_length --no-mixed --no-unal -x $file_to_align -1 $readset -2 $readset2 -S $sam 2> $baseout.log"   ) unless -s $sam;
    }else{
 	$qformat = '--'.$qformat;
       # NB --all is -a but --all is a bug
-   	&process_cmd("$bowtie2_exec --reorder $qformat -a -q --threads $threads --rdg 6,5 --rfg 6,5 --score-min L,-0.6,-0.4 --no-discordant -X $fragment_max_length --no-mixed --no-unal -x $file_to_align -1 $readset -2 $readset2 -S $sam 2> $baseout.log"   ) unless -s $sam;
+   	&process_cmd("$bowtie2_exec --reorder $qformat -a -q --threads 2 --rdg 6,5 --rfg 6,5 --score-min L,-0.6,-0.4 --no-discordant -X $fragment_max_length --no-mixed --no-unal -x $file_to_align -1 $readset -2 $readset2 -S $sam 2> $baseout.log"   ) unless -s $sam;
    }
   }
   else {
@@ -2476,6 +2511,16 @@ sub fix_check_kanga() {
  &namesort_sam($sam);
 }
 
+sub align_kanga_index(){
+	my $file_to_align = shift;
+	unless (-s $file_to_align . '.kangax'){
+		print "\t\t\tBuilding reference file for kanga...\r";
+	 	&process_cmd("$kangax_exec -i $file_to_align -o $file_to_align.kangax -r $file_to_align -t $file_to_align -T $threads 2> /dev/null >/dev/null" );
+		print " Done!                                   \n";
+	}
+
+}
+
 sub align_kanga() {
  my ( $baseout, $file_to_align, $readset, $readset2, $bam, $sam ) = @_;
  if ( -s $sam ) {
@@ -2484,11 +2529,6 @@ sub align_kanga() {
   chdir("../");
   return;
  }
- print "\t\t\tBuilding reference file for kanga...\r";
- &process_cmd(
-"$kangax_exec -i $file_to_align -o $file_to_align.kangax -r $file_to_align -t $file_to_align -T $threads 2> /dev/null >/dev/null"
- ) unless -s $file_to_align . '.kangax';
- print " Done!                                   \n";
  if ( $read_format eq 'fastq' ) {
   if ( $readset =~ /\.bz2$/ ) {
    confess "Kanga does not support .bz2 FASTQ files (only gz).\n";
@@ -2504,13 +2544,13 @@ sub align_kanga() {
 #   &fix_check_kanga("$sam");
    unless ( -s "$sam.1" ) {
     &process_cmd(
-"$kanga_exec -I $file_to_align.kangax -m 0 $qformat -R 100 -N -r 5 -X -M 5 -i $readset -o $sam.1 -F $sam.1.log -T $threads -w $sam.sqlite -W $readset >/dev/null"
+"$kanga_exec -I $file_to_align.kangax -m 0 $qformat -R 100 -N -r 5 -X -M 5 -i $readset -o $sam.1 -F $sam.1.log -T 2 -w $sam.sqlite -W $readset >/dev/null"
     );
     &fix_check_kanga("$sam.1");
    }
    unless ( -s "$sam.2" ) {
     &process_cmd(
-"$kanga_exec -I $file_to_align.kangax -m 0 $qformat -R 100 -N -r 5 -X -M 5 -i $readset2 -o $sam.2 -F $sam.2.log -T $threads  -w $sam.2.sqlite -W $readset2 >/dev/null"
+"$kanga_exec -I $file_to_align.kangax -m 0 $qformat -R 100 -N -r 5 -X -M 5 -i $readset2 -o $sam.2 -F $sam.2.log -T 2 -w $sam.2.sqlite -W $readset2 >/dev/null"
     );
     &fix_check_kanga("$sam.2");
    }
@@ -2527,7 +2567,7 @@ sub align_kanga() {
    ## Single END:
    unless ( -s "$sam" ) {
     &process_cmd(
-"$kanga_exec -I $file_to_align.kangax -m 0 -q 0 -R 100 -N -r 5 -X -M 5 -i $readset -o $sam -F $sam.log -T $threads -w $sam.sqlite -W $readset >/dev/null"
+"$kanga_exec -I $file_to_align.kangax -m 0 -q 0 -R 100 -N -r 5 -X -M 5 -i $readset -o $sam -F $sam.log -T 2 -w $sam.sqlite -W $readset >/dev/null"
     );
     &fix_check_kanga("$sam");
    }
@@ -2542,51 +2582,49 @@ sub align_kanga() {
  }
 }
 
+sub align_bwa_index(){
+   my $file_to_align = shift;
+   unless (-s $file_to_align . '.bwt'){
+      print "\t\t\tBuilding reference file for bwa...\r";
+      &process_cmd("$bwa_exec index $file_to_align 2> /dev/null >/dev/null");
+      print " Done!\n";
+   }
+}
+
 sub align_bwa() {
  my ( $baseout, $file_to_align, $readset, $readset2, $bam, $sam ) = @_;
- print "\t\t\tBuilding reference file for bwa...\r";
- &process_cmd("$bwa_exec index $file_to_align 2> /dev/null >/dev/null")
-   unless -s $file_to_align . '.bwt';
- print " Done!\n";
+
  if ( $read_format eq 'fastq' ) {
   my $qformat = ( &check_fastq_format($readset) eq 'phred33' ) ? ' ' : '-I';
-  &process_cmd(
-"$bwa_exec aln -e -1 -E 6 -q 20 -L $qformat -t $threads -f $baseout.sai $file_to_align $readset 2>/dev/null"
-  ) unless -s "$baseout.sai";
+  
+  &process_cmd("$bwa_exec aln -e -1 -E 6 -q 20 -L $qformat -t 2 -f $baseout.sai $file_to_align $readset 2>/dev/null"  ) unless -s "$baseout.sai";
   if ($readset2) {
-   &process_cmd(
-"$bwa_exec aln -e -1 -E 6 -q 20 -L $qformat -t $threads -f $baseout.2.sai -q 10 $file_to_align $readset2 2>/dev/null"
-   ) unless -s "$baseout.2.sai";
+   &process_cmd("$bwa_exec aln -e -1 -E 6 -q 20 -L $qformat -t 2 -f $baseout.2.sai -q 10 $file_to_align $readset2 2>/dev/null"   ) unless -s "$baseout.2.sai";
   }
  }
  elsif ( $read_format eq 'bam' ) {
-  &process_cmd(
-"$bwa_exec aln -e -1 -E 6 -q 20 -L -t $threads -b -f $baseout.sai -q 10 $file_to_align $readset 2>/dev/null"
-  ) unless -s "$baseout.sai";
+  &process_cmd("$bwa_exec aln -e -1 -E 6 -q 20 -L -t 2 -b -f $baseout.sai -q 10 $file_to_align $readset 2>/dev/null"  ) unless -s "$baseout.sai";
   if ($readset2) {
-   &process_cmd(
-"$bwa_exec aln -e -1 -E 6 -q 20 -L -t $threads -b -f $baseout.2.sai -q 10 $file_to_align $readset2 2>/dev/null"
-   ) unless -s "$baseout.2.sai";
+   &process_cmd("$bwa_exec aln -e -1 -E 6 -q 20 -L -t 2 -b -f $baseout.2.sai -q 10 $file_to_align $readset2 2>/dev/null"   ) unless -s "$baseout.2.sai";
   }
  }
+ 
  confess "Could not produce BWA SAI for $readset\n" unless -s "$baseout.sai";
  my $readgroup = '@RG\tID:' . $readset;
  $readgroup =~ s/\.bz2$//;
  $readgroup =~ s/\.fastq$//;
  $readgroup =~ s/\.bam$//;
  if ($readset2) {
-  &process_cmd(
-"$bwa_exec sampe -n 20 -N 100 -a 900 -s -r '$readgroup' $file_to_align $baseout.sai $baseout.2.sai $readset $readset2 > $sam 2>/dev/null"
-  );
+
+  &process_cmd("$bwa_exec sampe -n 20 -N 100 -a 900 -s -r '$readgroup' $file_to_align $baseout.sai $baseout.2.sai $readset $readset2 > $sam 2>/dev/null"  ) unless -s $sam;
   unlink("$baseout.sai");
   unlink("$baseout.2.sai");
  }
  else {
-  &process_cmd(
-"$bwa_exec samse -n 20 -r '$readgroup' $file_to_align $baseout.sai $readset > $sam 2>/dev/null"
-  );
+  &process_cmd("$bwa_exec samse -n 20 -r '$readgroup' $file_to_align $baseout.sai $readset > $sam 2>/dev/null"  ) unless -s $sam;
   unlink("$baseout.sai");
  }
+
  &namesort_sam($sam);
 }
 

@@ -4,7 +4,7 @@ echo you may want to run this as root...
 sleep 3
 echo Installing Perl dependencies
 sleep 1
-cpan Pod::Usage Getopt::Long Digest::MD5 Digest::SHA Statistics::Descriptive Time::Progress Time::localtime File::stat File::Path Text::CSV_XS Bio::SeqIO \
+cpanm Pod::Usage Getopt::Long Digest::MD5 Digest::SHA Statistics::Descriptive Time::Progress Time::localtime File::stat File::Path Text::CSV_XS Bio::SeqIO \
  Cwd JSON JSON::PP FindBin DBI Storable GD::SVG SVG Devel::CheckLib Bio::Graphics Data::Dumper Compress::LZ4
 echo Installing R dependencies
 sleep 1

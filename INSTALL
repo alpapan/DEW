@@ -1,6 +1,9 @@
 Note that for GD you may need this library: libgd-dev
 $ sudo apt-get install libgd-dev
 
+We use CPANm to install Perl libraries
+$ sudo apt-get install cpanm
+
 Then you need to install some Perl libraries. This can be done by your system administrator or in your own user directory (if setup properly - ask your sysadmin)
 
 $ sudo ./dew.install.sh
