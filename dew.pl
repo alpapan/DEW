@@ -1174,7 +1174,7 @@ sub perform_checks_preliminary() {
    unless $samtools_exec && -s $samtools_exec && -x $samtools_exec;
 
  my $samtools_version = `$samtools_exec 2>&1 |head -n 3|tail -n 1`;
- die "Because the Samtools folks keep changing the option list for sort, now Samtools 0.1.19 is required. See 3rd_party/ and make sure you ran make\n" unless $samtools_version && $samtools_version=~/0\.1\.19/;
+ die "Because the Samtools folks keep changing the option lists, now Samtools 0.1.19 is required. See 3rd_party/ and make sure you ran make\n" unless $samtools_version && $samtools_version=~/0\.1\.19/;
 
  $read_format = lc($read_format);
  pod2usage "Read format can only be BAM or FASTQ\n"
@@ -1447,7 +1447,7 @@ sub prepare_library_alias() {
 
    $print .=
        $readset . "\t"
-     . $library_aliases{$sample_names[$r]} . "\t"
+     . $library_aliases{$readset} . "\t"
      . $library_metadata{$sample_names[$r]}{'group'} . "\n";
  }
  if ($print) {
@@ -1623,7 +1623,7 @@ sub prepare_input_data() {
  elsif ($use_bwa) {
   unless ( -s $file_to_align . '.bwt' ) {
    print "\t\t\tBuilding reference file for bwa...\r";
-   &process_cmd("$bwa_exec index -a is $file_to_align 2> /dev/null >/dev/null");
+   &process_cmd("$bwa_exec index $file_to_align 2> /dev/null >/dev/null");
    print " Done!\n";
   }
  }
@@ -2434,7 +2434,7 @@ sub align_bowtie2() {
 
 sub namesort_sam(){
  my $sam = shift;
- confess unless $sam && -s $sam;
+ warn "No SAM file or not existing: $sam" unless $sam && -s $sam;
  my $out = "$sam.namesorted";
  return $out if -s $out;
  &process_cmd("$samtools_exec view -H -S $sam > $out 2> /dev/null");
@@ -2545,7 +2545,7 @@ sub align_kanga() {
 sub align_bwa() {
  my ( $baseout, $file_to_align, $readset, $readset2, $bam, $sam ) = @_;
  print "\t\t\tBuilding reference file for bwa...\r";
- &process_cmd("$bwa_exec index -a is $file_to_align 2> /dev/null >/dev/null")
+ &process_cmd("$bwa_exec index $file_to_align 2> /dev/null >/dev/null")
    unless -s $file_to_align . '.bwt';
  print " Done!\n";
  if ( $read_format eq 'fastq' ) {
@@ -2576,14 +2576,14 @@ sub align_bwa() {
  $readgroup =~ s/\.bam$//;
  if ($readset2) {
   &process_cmd(
-"$bwa_exec sampe -n 20 -N 100 -a 900 -s -r '$readgroup' -o $sam $file_to_align $baseout.sai $baseout.2.sai $readset $readset2 2>/dev/null"
+"$bwa_exec sampe -n 20 -N 100 -a 900 -s -r '$readgroup' $file_to_align $baseout.sai $baseout.2.sai $readset $readset2 > $sam 2>/dev/null"
   );
   unlink("$baseout.sai");
   unlink("$baseout.2.sai");
  }
  else {
   &process_cmd(
-"$bwa_exec samse -n 20 -s -r '$readgroup' -o $sam $file_to_align $baseout.sai $readset 2>/dev/null"
+"$bwa_exec samse -n 20 -r '$readgroup' $file_to_align $baseout.sai $readset > $sam 2>/dev/null"
   );
   unlink("$baseout.sai");
  }
