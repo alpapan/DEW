@@ -231,7 +231,6 @@ use Bio::SeqFeature::Lite;
 $| = 1;
 
 $ENV{'PATH'} = "$RealBin:$RealBin/3rd_party/bin/:$RealBin/util:" . $ENV{'PATH'};
-my $cwd = `pwd`;chomp($cwd);
 #################################
 my (
      $debug,                   $input_reference_file,
@@ -296,6 +295,7 @@ my (
      $options_single,    $no_js_graphs,       $do_png,
      $no_pdf,            $no_pairwise,        $verbose
 );
+my $cwd = getcwd;
 my $given_cmd = $0 . " " . join( " ", @ARGV );
 my $sort_tmp = $cwd.'/sort_tmp';
 
@@ -400,7 +400,6 @@ my $R_threads = $threads <= 8 ? $threads : 8;
 
 $uid = &get_uid_time('dew') unless $uid;
 $dbname = $uid . '_transcriptome.sqlite.db' unless $dbname;
-my $cwd = getcwd;
 my $result_dir =
     $main_output_dir
   ? $cwd . "/" . $main_output_dir . '/'
@@ -1182,7 +1181,7 @@ sub perform_checks_preliminary() {
    unless $samtools_exec && -s $samtools_exec && -x $samtools_exec;
 
  my $samtools_version = `$samtools_exec 2>&1 |head -n 3|tail -n 1`;
- die "Because the Samtools folks keep changing the option lists, now Samtools 0.1.19 is required. See 3rd_party/ and make sure you ran make\n" unless $samtools_version && $samtools_version=~/0\.1\.19/;
+# die "Because the Samtools folks keep changing the option lists, now Samtools 0.1.19 is required. See 3rd_party/ and make sure you ran make\n" unless $samtools_version && $samtools_version=~/0\.1\.19/;
 
  $read_format = lc($read_format);
  pod2usage "Read format can only be BAM or FASTQ\n"
@@ -1622,8 +1621,7 @@ sub prepare_input_data() {
  if ($use_kanga) {
   unless ( -s $file_to_align . '.kangax' ) {
    print "\t\t\tBuilding reference file for kanga...\r";
-   &process_cmd(
-"$kangax_exec -i $file_to_align -o $file_to_align.kangax -r $file_to_align -t $file_to_align  2> /dev/null >/dev/null"
+   &process_cmd("$kangax_exec -i $file_to_align -o $file_to_align.kangax -r $file_to_align -t $file_to_align  2> /dev/null >/dev/null"
    );
    print " Done!\n";
   }
@@ -1643,8 +1641,7 @@ sub prepare_input_data() {
   unless ( -s "$file_to_align.1.bt2" ) {
    my $build_exec = $bowtie2_exec . '-build';
    print "\t\t\tBuilding reference file for bowtie2...\r";
-   &process_cmd(
-"$build_exec --offrate 1 $file_to_align $file_to_align >/dev/null 2>> $result_dir/$uid.log"
+   &process_cmd("$build_exec --offrate 1 $file_to_align $file_to_align >/dev/null 2>> $result_dir/$uid.log"
    ) unless -s "$file_to_align.rev.1.bt2";
    print " Done!\n";
   }
@@ -1721,14 +1718,11 @@ sub starts_alignments() {
 
    my $alignment_bam_file = $baseout . '.bam';
    my $alignment_sam_file = $baseout . '.sam';
-   my $express_results = $alignment_bam_file . ".express.results";
 
-   if ( $already_done_alignments{$readset} ) {
-    die "Supposedly existing alignment $alignment_bam_file does not exist. Any chance you're using an old database?\n" unless -s $alignment_bam_file;
-    &process_express_bias( $express_results, $readset );
-   }
-   elsif (@use_existing_bam) {    #name or coord sorted
-      &prepare_alignment_from_existing( $file_to_align, $i,  $baseout, $alignment_bam_file, $alignment_sam_file  );
+   if (!$already_done_alignments{$readset} && @use_existing_bam) {    #name or coord sorted
+      #&prepare_alignment_from_existing( $file_to_align, $i,  $baseout, $alignment_bam_file, $alignment_sam_file  );
+      my $thread = threads->create('prepare_alignment_from_existing',$file_to_align, $i,  $baseout, $alignment_bam_file, $alignment_sam_file  );
+      $alignment_thread_helper->add_thread($thread);
    }
    else {
     my $thread = threads->create('prepare_alignment',$file_to_align, $i , $baseout, $alignment_bam_file, $alignment_sam_file );
@@ -1743,6 +1737,31 @@ sub starts_alignments() {
   # the following cannot be threaded readily due to DB operations
 
   for ( my $i = 0 ; $i < (@readsets) ; $i++ ) {
+
+   my $readset          = $readsets[$i];
+   my $readset2 = $readsets2[$i] if $readsets2[$i];
+   my $readset_basename = fileparse($readset);
+
+
+   my $alignment_bam_file = $baseout . '.bam';
+   my $alignment_sam_file = $baseout . '.sam';
+   my ($rpkm_hashref, $eff_counts_hashref);
+
+   if ( $already_done_alignments{$readset} ) {
+    my $express_results = $alignment_bam_file . ".express.results";
+    die "Supposedly existing alignment $alignment_bam_file does not exist. Any chance you're using an old database?\n" unless -s $alignment_bam_file;
+     # can't thread this as it does DB operations
+    &process_express_bias( $express_results, $readset );
+   }else{
+    ($alignment_bam_file, $rpkm_hashref, $eff_counts_hashref ) = &perform_correct_bias( $alignment_bam_file, $file_to_align, $readset, $alignment_bam_file . '.namesorted' )
+      if ($perform_bias_correction);
+    &process_alignments( $alignment_bam_file, $readset, $readset2 ) if $readset2;
+    &process_alignments( $alignment_bam_file, $readset ) if !$readset2;
+   }
+
+ } 
+
+  for ( my $i = 0 ; $i < (@readsets) ; $i++ ) {
    print "    Processing "
      . ( $i + 1 ) . " of "
      . scalar(@readsets)
@@ -1751,21 +1770,13 @@ sub starts_alignments() {
    my $readset          = $readsets[$i];
    my $readset2 = $readsets2[$i] if $readsets2[$i];
    my $readset_basename = fileparse($readset);
-
    my $baseout       = $file_to_align;
    $baseout =~ s/.toalign$//;
    $baseout .= '_vs_' . $readset_basename;
 
    my $alignment_bam_file = $baseout . '.bam';
    my $alignment_sam_file = $baseout . '.sam';
-   my $express_results = $alignment_bam_file . ".express.results";
-   my ($rpkm_hashref, $eff_counts_hashref);
 
-   ($alignment_bam_file, $rpkm_hashref, $eff_counts_hashref ) = &perform_correct_bias( $alignment_bam_file, $file_to_align, $readset, $alignment_bam_file . '.namesorted' )
-   if ($perform_bias_correction);
-
-   &process_alignments( $alignment_bam_file, $readset, $readset2 ) if $readset2;
-   &process_alignments( $alignment_bam_file, $readset ) if !$readset2;
 
    next if $only_alignments || ($resume && -s $alignment_bam_file . ".depth.completed");
    $aligned_ids_hashref =
@@ -1909,9 +1920,9 @@ sub prepare_alignment_from_existing() {
    . $use_existing_bam[$i]
    . " as $alignment_bam_file.namesorted\n"
    unless -s "$alignment_bam_file.namesorted";
-  &process_cmd("$samtools_exec sort -o -@ $samtools_threads -m $sam_sort_memory "
+  &process_cmd("$samtools_exec sort -T $sort_tmp -o $alignment_bam_file -@ $samtools_threads -m $sam_sort_memory "
     . $use_existing_bam[$i]
-    . " - > $alignment_bam_file  2>/dev/null" ) unless -s $alignment_bam_file;
+    . "  2>/dev/null" ) unless -s $alignment_bam_file;
  }else{
  # coord sorted
  # hard link:
@@ -1926,14 +1937,14 @@ sub prepare_alignment_from_existing() {
    unless -s "$alignment_bam_file";
   unless ( -s "$alignment_bam_file.namesorted"){
     # samtools sort -f does'nt work with insuffiecient memory
-    &process_cmd(   "$samtools_exec sort -o -n -@ $samtools_threads -m $sam_sort_memory "
+    &process_cmd(   "$samtools_exec sort -T $sort_tmp -o $alignment_bam_file.namesorted.bam -n -@ $samtools_threads -m $sam_sort_memory "
                . $use_existing_bam[$i]
-               . " - > $alignment_bam_file.namesorted.bam " );
+                );
     rename("$alignment_bam_file.namesorted.bam","$alignment_bam_file.namesorted");
   }
   die "Cannot find $alignment_bam_file.namesorted \n" unless -s "$alignment_bam_file.namesorted";
  }
-
+ unlink($alignment_sam_file) if -s $alignment_sam_file;
    
 }
 
@@ -2001,11 +2012,15 @@ sub perform_alignments() {
    &align_bowtie2( $baseout, $file_to_align, $readset, $readset2, $bam, $sam );
   }
   confess "Could not produce SAM file for $readset\n" unless -s $sam;
-  &process_cmd("$samtools_exec view -S -u $sam 2>/dev/null|$samtools_exec sort -o -@ $samtools_threads -m $sam_sort_memory - - > $bam 2>/dev/null"  ) unless -s $bam;
+  &process_cmd("$samtools_exec view -u $sam 2>/dev/null|$samtools_exec sort -T $sort_tmp -o $bam -@ $samtools_threads -m $sam_sort_memory -  2>/dev/null"  ) unless -s $bam;
  }
  confess "Could not convert to BAM file ($bam) for $readset\n" unless -s $bam;
+
+ unlink($sam) if -s $sam;
+
  &process_cmd("$samtools_exec index $bam")
    unless -s $bam . '.bai' && ( -s $bam . '.bai' ) > 200;
+
  return ( $bam, $sam );
 }
 
@@ -2019,7 +2034,7 @@ sub process_depth_of_coverage($$$) {
  print LOG &mytime . "Processing $readset_name depth from $bam\n";
  print &mytime . "Processing $readset_name depth from $bam\n";
  my $tmp_depth_file = $bam . ".depth";
- &process_cmd("$samtools_exec depth $bam > $tmp_depth_file 2>/dev/null")
+ &process_cmd("$samtools_exec depth -s -q 10 -Q 30 $bam > $tmp_depth_file 2>/dev/null")
    unless -s $tmp_depth_file;
 
  unless ( -s $tmp_depth_file > 100 ) {
@@ -2478,9 +2493,9 @@ sub namesort_sam(){
  warn "No SAM file or not existing: $sam" unless $sam && -s $sam;
  my $out = "$sam.namesorted";
  return $out if -s $out;
- &process_cmd("$samtools_exec view -H -S $sam > $out 2> /dev/null");
+ &process_cmd("$samtools_exec view -H $sam > $out 2> /dev/null");
  confess "Can't produce $out. Is it a SAM file?\n" unless -s $out;
- &process_cmd("$samtools_exec view -S $sam  2> /dev/null| $sort_exec -T $sort_tmp -S $sort_memory_sub -nk4,4|$sort_exec -T $sort_tmp -S $sort_memory_sub -s -k3,3|$sort_exec -T $sort_tmp -S $sort_memory_sub -s -k1,1 >> $out" );
+ &process_cmd("$samtools_exec view $sam 2> /dev/null| $sort_exec -T $sort_tmp -S $sort_memory_sub -nk4,4|$sort_exec -T $sort_tmp -S $sort_memory_sub -s -k3,3|$sort_exec -T $sort_tmp -S $sort_memory_sub -s -k1,1 >> $out" );
  unlink($sam);
  chdir($result_dir);
  link( fileparse($out), fileparse($sam));
@@ -2566,7 +2581,7 @@ sub align_kanga() {
    unlink("$sam.1");
    unlink("$sam.2");
    &process_cmd(
-             "$samtools_exec view -F12 -h -T $file_to_align -S -o $sam $sam.t");
+             "$samtools_exec view -F12 -h -T $file_to_align -o $sam $sam.t");
    unlink("$sam.t");
   }
   else {
@@ -2740,7 +2755,7 @@ sub perform_correct_bias($$$) {
 # if we are to allow express to do bias-correction then we need at least 200 genes with enough reads (fragments)
  my $readset_metadata = &sqlite_get_readset_metadata($readset);
  my $readset_name     = $readset_metadata->{'alias'};
-my $express_dir      = $result_dir . "$readset_name.bias";
+ my $express_dir      = $result_dir . "$readset_name.bias";
 
 # The library size is determined by the total number of reads in the readset
 # this is due to the need to support searches that are not genome wide
@@ -2766,13 +2781,13 @@ my $express_dir      = $result_dir . "$readset_name.bias";
  unless ( -s $express_results ) {
   mkdir($express_dir) unless -d $express_dir;
   if ($use_bwa) {
-   &process_cmd("$samtools_exec sort -o -@ $samtools_threads -n -m $sam_sort_memory $original_bam - > $namesorted_sam.bam 2>/dev/null"
+   &process_cmd("$samtools_exec sort -T $sort_tmp -o $namesorted_sam.bam -@ $samtools_threads -n -m $sam_sort_memory $original_bam  2>/dev/null"
    ) unless -s $namesorted_bam;
    if ($contextual_alignment) {
     &process_cmd("$current_express_exec  -o $express_dir --output-align-samp $fasta_file $namesorted_bam > /dev/null 2> $express_results.log"
     ) unless -s "$express_dir/results.xprs";
     sleep(30);
-    &process_cmd("$samtools_exec sort -o -@ $samtools_threads -m $sam_sort_memory $express_dir/hits.1.samp.bam - > $express_bam_base.bam 2>/dev/null"
+    &process_cmd("$samtools_exec sort -T $sort_tmp -o $express_bam_base.bam -@ $samtools_threads -m $sam_sort_memory $express_dir/hits.1.samp.bam  2>/dev/null"
     ) unless -s "$express_bam_base.bam";
     rename( "$express_dir/results.xprs", $express_results );
     rename( "$express_dir/varcov.xprs",  $express_results . ".varcov" );
@@ -2813,9 +2828,7 @@ my $express_dir      = $result_dir . "$readset_name.bias";
      close SAM;
 
      #sort for express
-     &process_cmd(
-"$samtools_exec view -F4 -o $tmp_sam_file $original_bam '$id'  |$sort_exec -T $sort_tmp -S $sort_memory_exec -k1  >>$tmp_sam_file  "
-     );
+     &process_cmd("$samtools_exec view -F4 -o $tmp_sam_file $original_bam '$id'  |$sort_exec -T $sort_tmp -S $sort_memory_exec -k1  >>$tmp_sam_file  " );
      if ( -s $tmp_sam_file < 200 ) {
       warn "No alignments for $id. Skipping\n" if $debug;
       print LOG "No alignments for $id. Skipping\n";
@@ -2862,9 +2875,7 @@ my $express_dir      = $result_dir . "$readset_name.bias";
      confess "Express failed to produce output\n"
        unless -s "$express_dir/results.xprs";
      sleep(30);
-     &process_cmd(
-"$samtools_exec view -u $express_dir/hits.1.samp.bam | $samtools_exec sort -o -@ $samtools_threads -m $sam_sort_memory - - > $express_bam_base.bam 2>/dev/null"
-     ) unless -s "$express_bam_base.bam";
+     &process_cmd("$samtools_exec view -u $express_dir/hits.1.samp.bam | $samtools_exec sort -T $sort_tmp -o $express_bam_base.bam -@ $samtools_threads -m $sam_sort_memory - 2>/dev/null" ) unless -s "$express_bam_base.bam";
     }
     elsif ( -s $namesorted_sam ) {
      &process_cmd(
@@ -2874,7 +2885,7 @@ my $express_dir      = $result_dir . "$readset_name.bias";
        unless -s "$express_dir/results.xprs";
      sleep(30);
      my $express_hits_file = -s "$express_dir/hits.1.samp.bam" ? "$express_dir/hits.1.samp.bam" : "$express_dir/hits.1.samp.sam";
-     &process_cmd("$samtools_exec view -S -u $express_hits_file | $samtools_exec sort -o -@ $samtools_threads -m $sam_sort_memory - - > $express_bam_base.bam 2>/dev/null") unless -s "$express_bam_base.bam";
+     &process_cmd("$samtools_exec view -u $express_hits_file | $samtools_exec sort -T $sort_tmp -o $express_bam_base.bam -@ $samtools_threads -m $sam_sort_memory - 2>/dev/null") unless -s "$express_bam_base.bam";
     }
     rename( "$express_dir/results.xprs", $express_results );
 
