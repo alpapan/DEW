@@ -136,10 +136,11 @@ test times:
             -options_single :s      => Extra options  (on top of -extra_options). These will apply only on single-end readsets (given without a matching -2read); e.g. "express:r-stranded". Only Express supported currently
             -verbose                => Print on the screen any system commands that are run. Caution, that will produce a lot of output on the screen they are kept in the .log file anyway).
             -no_pdf                 => Do not convert gene coverage/expression images to multi-page PDF. Otherwise, will print a PDF for every 500 genes per PDF (slow for large genomes & dozens of readsets)
-            -express_min_bias :i    => Minimum number of reads (not fragments) before allowing express to undertake bias corrections (only if -isoform is used). Set it to 0 if you're using an external aux-param-file. Defaults to 10 million reads
+	    -sort_tmp :s	    => Temporary directory to use for sorting files. It will need to be on a fast disk that has sufficient free space (depends on number of -threads)
 
  Express options:
 
+            -express_min_bias :i    => Minimum number of reads (not fragments) before allowing express to undertake bias corrections (only if -isoform is used). Set it to 0 if you're using an external aux-param-file. Defaults to 10 million reads
 	    -nobatch_express        => eXpress is normally ran with 2 additional 'batch' post-processing searches. Rarely a readset will cause this to hung (for days). This option disables the batch search (recommend to only use it with -reuse and -over and only for the readset that causes the issue)
             -readset_separation     => Expected insert size for eXpress (approximately). Defaults to 250.
 
@@ -230,6 +231,7 @@ use Bio::SeqFeature::Lite;
 $| = 1;
 
 $ENV{'PATH'} = "$RealBin:$RealBin/3rd_party/bin/:$RealBin/util:" . $ENV{'PATH'};
+my $cwd = `pwd`;chomp($cwd);
 #################################
 my (
      $debug,                   $input_reference_file,
@@ -295,8 +297,10 @@ my (
      $no_pdf,            $no_pairwise,        $verbose
 );
 my $given_cmd = $0 . " " . join( " ", @ARGV );
+my $sort_tmp = $cwd.'/sort_tmp';
 
 pod2usage $! unless GetOptions(
+ 'sort_tmp:s'		=> \$sort_tmp,
  'do_galaxy_cleanup' => \$do_galaxy_cleanup, # delete EVERYTHING EXCEPT PDF AND TSV and sqlite
  'nocheck|no_check'      => \$no_checks,            #TMP for Debug; should not be needed
  'infile:s'      => \$input_reference_file,
@@ -382,6 +386,8 @@ if ($sort_version=~/^sort \(GNU coreutils\) (\d+)/){
    $sort_memory_exec .=  " --parallel=$sort_threads" if ($1 && $1 >= 8);
    $sort_memory_sub .= " --parallel=$sort_threads_sub" if ($1 && $1 >= 8);
 }
+mkdir($sort_tmp) if !-d $sort_tmp;
+
 # parallelise alignments; each alignment uses 2 threads
 my $alignment_thread_helper = new Thread_helper(int($threads/2));
 
@@ -2474,7 +2480,7 @@ sub namesort_sam(){
  return $out if -s $out;
  &process_cmd("$samtools_exec view -H -S $sam > $out 2> /dev/null");
  confess "Can't produce $out. Is it a SAM file?\n" unless -s $out;
- &process_cmd("$samtools_exec view -S $sam  2> /dev/null| $sort_exec -T \$PWD -S $sort_memory_sub -nk4,4|$sort_exec -T \$PWD -S $sort_memory_sub -s -k3,3|$sort_exec -T \$PWD -S $sort_memory_sub -s -k1,1 >> $out" );
+ &process_cmd("$samtools_exec view -S $sam  2> /dev/null| $sort_exec -T $sort_tmp -S $sort_memory_sub -nk4,4|$sort_exec -T $sort_tmp -S $sort_memory_sub -s -k3,3|$sort_exec -T $sort_tmp -S $sort_memory_sub -s -k1,1 >> $out" );
  unlink($sam);
  chdir($result_dir);
  link( fileparse($out), fileparse($sam));
@@ -2724,7 +2730,7 @@ sub perform_correct_bias($$$) {
  }
  
  my $reads_that_aligned = `$samtools_exec view -F260 $original_bam|wc -l` if -s $original_bam;chomp($reads_that_aligned);
- my $genes_that_aligned =  `$samtools_exec view -F260 $original_bam|cut -f 3 |$sort_exec -T \$PWD -S $sort_memory_exec -u|wc -l` if -s $original_bam;chomp($genes_that_aligned);
+ my $genes_that_aligned =  `$samtools_exec view -F260 $original_bam|cut -f 3 |$sort_exec -T $sort_tmp -S $sort_memory_exec -u|wc -l` if -s $original_bam;chomp($genes_that_aligned);
  
  if ( !$reads_that_aligned ) {
   confess "No reads aligned!";
@@ -2808,7 +2814,7 @@ my $express_dir      = $result_dir . "$readset_name.bias";
 
      #sort for express
      &process_cmd(
-"$samtools_exec view -F4 -o $tmp_sam_file $original_bam '$id'  |$sort_exec -T \$PWD -S $sort_memory_exec -k1  >>$tmp_sam_file  "
+"$samtools_exec view -F4 -o $tmp_sam_file $original_bam '$id'  |$sort_exec -T $sort_tmp -S $sort_memory_exec -k1  >>$tmp_sam_file  "
      );
      if ( -s $tmp_sam_file < 200 ) {
       warn "No alignments for $id. Skipping\n" if $debug;
@@ -2909,7 +2915,7 @@ my $express_dir      = $result_dir . "$readset_name.bias";
 
      #sort for express
      &process_cmd(
-       "$samtools_exec view -F4 $original_bam '$id' |$sort_exec -T \$PWD -S $sort_memory_exec -k1  >>$tmp_sam_file "
+       "$samtools_exec view -F4 $original_bam '$id' |$sort_exec -T $sort_tmp -S $sort_memory_exec -k1  >>$tmp_sam_file "
      );
      if ( !-s $tmp_sam_file || -s $tmp_sam_file < 200 ) {
       warn "No alignments for $id. Skipping\n" if $debug;
