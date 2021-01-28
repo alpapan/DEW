@@ -1086,9 +1086,8 @@ sub sqlite_add_express_expression_statistics() {
  my $check = &sqlite_get_expression_statistics( $seq_md5hash, $readset );
  if ( !$check || !defined( $check->{'express_fpkm'} ) ) {
 
-  #  warn Dumper $check if $debug;
-  die
-"Could not add express expression statistics for: $seq_md5hash,$readset,$fpkm,$eff_counts,$tpm\n";
+   # warn Dumper $check if $debug;
+  die "Could not add express expression statistics for: $seq_md5hash,$readset,$fpkm,$eff_counts,$tpm\n";
  }
 }
 
@@ -1711,13 +1710,9 @@ sub starts_alignments() {
   for ( my $i = 0 ; $i < (@readsets) ; $i++ ) {
    my $readset          = $readsets[$i];
    my $readset_basename = fileparse($readset);
-
-   my $baseout       = $file_to_align;
-   $baseout =~ s/.toalign$//;
-   $baseout .= '_vs_' . $readset_basename;
-
-   my $alignment_bam_file = $baseout . '.bam';
-   my $alignment_sam_file = $baseout . '.sam';
+   my $alnbase          = $baseout . '_vs_' . $readset_basename;
+   my $alignment_bam_file = $alnbase . '.bam';
+   my $alignment_sam_file = $alnbase . '.sam';
 
    if (!$already_done_alignments{$readset} && @use_existing_bam) {    #name or coord sorted
       #&prepare_alignment_from_existing( $file_to_align, $i,  $baseout, $alignment_bam_file, $alignment_sam_file  );
@@ -1741,10 +1736,10 @@ sub starts_alignments() {
    my $readset          = $readsets[$i];
    my $readset2 = $readsets2[$i] if $readsets2[$i];
    my $readset_basename = fileparse($readset);
+   my $alnbase          = $baseout . '_vs_' . $readset_basename;
+   my $alignment_bam_file = $alnbase . '.bam';
+   my $alignment_sam_file = $alnbase . '.sam';
 
-
-   my $alignment_bam_file = $baseout . '.bam';
-   my $alignment_sam_file = $baseout . '.sam';
    my ($rpkm_hashref, $eff_counts_hashref);
 
    if ( $already_done_alignments{$readset} ) {
@@ -1770,13 +1765,9 @@ sub starts_alignments() {
    my $readset          = $readsets[$i];
    my $readset2 = $readsets2[$i] if $readsets2[$i];
    my $readset_basename = fileparse($readset);
-   my $baseout       = $file_to_align;
-   $baseout =~ s/.toalign$//;
-   $baseout .= '_vs_' . $readset_basename;
-
-   my $alignment_bam_file = $baseout . '.bam';
-   my $alignment_sam_file = $baseout . '.sam';
-
+   my $alnbase          = $baseout . '_vs_' . $readset_basename;
+   my $alignment_bam_file = $alnbase . '.bam';
+   my $alignment_sam_file = $alnbase . '.sam';
 
    next if $only_alignments || ($resume && -s $alignment_bam_file . ".depth.completed");
    $aligned_ids_hashref =
@@ -1846,11 +1837,9 @@ sub starts_alignments() {
    my $readset          = $readsets[$i];
    my $readset2 = $readsets2[$i] if $readsets2[$i];
    my $readset_basename = fileparse($readset);
-   my $baseout       = $new_file_to_align;
-   $baseout =~ s/.toalign$//;
-   $baseout .= '_vs_' . $readset_basename;
-   my $alignment_bam_file = $baseout . '.bam';
-   my $alignment_sam_file = $baseout . '.sam';
+   my $alnbase          = $baseout . '_vs_' . $readset_basename;
+   my $alignment_bam_file = $alnbase . '.bam';
+   my $alignment_sam_file = $alnbase . '.sam';
    my ($rpkm_hashref, $eff_counts_hashref);
 
     #  print '.' x ( $i + 1 ) . "\r";
@@ -1967,7 +1956,8 @@ sub perform_alignments() {
 
  print "\n" . &mytime
    . "Aligning: Performing alignments of $file_to_align vs $readset_basename\n";
- my $readset_time  = stat($readset)->mtime;
+ my $readset_time = stat($readset)->mtime;
+ die "Cannot get modification time for $readset" unless $readset_time;
  my $readset2_time = $readset2 ? stat($readset2)->mtime : int(0);
  print LOG &mytime . "Processing $readset as $bam\n";
 
@@ -2015,8 +2005,6 @@ sub perform_alignments() {
   &process_cmd("$samtools_exec view -u $sam 2>/dev/null|$samtools_exec sort -T $sort_tmp -o $bam -@ $samtools_threads -m $sam_sort_memory -  2>/dev/null"  ) unless -s $bam;
  }
  confess "Could not convert to BAM file ($bam) for $readset\n" unless -s $bam;
-
- unlink($sam) if -s $sam;
 
  &process_cmd("$samtools_exec index $bam")
    unless -s $bam . '.bai' && ( -s $bam . '.bai' ) > 200;
@@ -2702,6 +2690,9 @@ sub process_alignments($) {
 sub process_express_bias() {
  my $express_results = shift;
  my $readset         = shift;
+
+ warn "process_express_bias $express_results $readset\n" if $debug;
+
  # final file created when all data are processed and stored.
  my $output = $express_results; 
  $output =~s/.express.results$/.depth.completed/;
@@ -2723,18 +2714,15 @@ sub process_express_bias() {
  }
 }
 
-sub perform_correct_bias($$$) {
+sub perform_correct_bias() {
  print &mytime   . "eXpress: performing Illumina bias and transcript assignment corrections\n";
- my $original_bam       = shift;
- my $fasta_file         = shift;
- my $readset            = shift;
- my $namesorted_sam     = shift;
- 
+ my ($original_bam, $fasta_file, $readset, $namesorted_sam )    = @_;
  my $original_bam_base = fileparse($original_bam);
  my $namesorted_bam =
-   ( $namesorted_sam =~ /\.bam.namesorted$/ )
-   ? $namesorted_sam
-   : $namesorted_sam . '.bam';
+#   ( $namesorted_sam =~ /\.bam.namesorted$/ )
+#   ? $namesorted_sam :
+    $namesorted_sam . '.bam';
+
  my $express_bam_base = $result_dir . $original_bam_base . ".express.sampled";
  my $express_bam      = $express_bam_base . '.bam';
  my $express_results  = $result_dir . $original_bam_base . ".express.results";
@@ -2744,6 +2732,7 @@ sub perform_correct_bias($$$) {
    return $original_bam;
  }
  
+ warn "Counting output of $original_bam\n" if $debug;
  my $reads_that_aligned = `$samtools_exec view -F260 $original_bam|wc -l` if -s $original_bam;chomp($reads_that_aligned);
  my $genes_that_aligned =  `$samtools_exec view -F260 $original_bam|cut -f 3 |$sort_exec -T $sort_tmp -S $sort_memory_exec -u|wc -l` if -s $original_bam;chomp($genes_that_aligned);
  
@@ -2786,7 +2775,7 @@ sub perform_correct_bias($$$) {
    if ($contextual_alignment) {
     &process_cmd("$current_express_exec  -o $express_dir --output-align-samp $fasta_file $namesorted_bam > /dev/null 2> $express_results.log"
     ) unless -s "$express_dir/results.xprs";
-    sleep(30);
+    sleep(3);
     &process_cmd("$samtools_exec sort -T $sort_tmp -o $express_bam_base.bam -@ $samtools_threads -m $sam_sort_memory $express_dir/hits.1.samp.bam  2>/dev/null"
     ) unless -s "$express_bam_base.bam";
     rename( "$express_dir/results.xprs", $express_results );
@@ -2836,8 +2825,7 @@ sub perform_correct_bias($$$) {
       unlink($tmp_sam_file)   unless $debug;
       next;
      }
-     &process_cmd(
-"$current_express_exec  -o $tmp_sam_file.dir $tmp_fasta_file $tmp_sam_file >/dev/null  2> $express_results.log"
+     &process_cmd("$current_express_exec  -o $tmp_sam_file.dir $tmp_fasta_file $tmp_sam_file >/dev/null  2> $express_results.log"
      ) unless -s $tmp_express_file;
      sleep(3);
      if ( -s $tmp_express_file < 200 ) {
@@ -2869,8 +2857,7 @@ sub perform_correct_bias($$$) {
   else {
    if ($contextual_alignment) {
     if ( -s $namesorted_bam ) {
-     &process_cmd(
-"$current_express_exec  -o $express_dir --output-align-samp $fasta_file $namesorted_bam >/dev/null  2> $express_results.log"
+     &process_cmd("$current_express_exec  -o $express_dir --output-align-samp $fasta_file $namesorted_bam >/dev/null  2> $express_results.log"
      ) unless -s "$express_dir/results.xprs";
      confess "Express failed to produce output\n"
        unless -s "$express_dir/results.xprs";
@@ -2878,8 +2865,7 @@ sub perform_correct_bias($$$) {
      &process_cmd("$samtools_exec view -u $express_dir/hits.1.samp.bam | $samtools_exec sort -T $sort_tmp -o $express_bam_base.bam -@ $samtools_threads -m $sam_sort_memory - 2>/dev/null" ) unless -s "$express_bam_base.bam";
     }
     elsif ( -s $namesorted_sam ) {
-     &process_cmd(
-"$current_express_exec  -o $express_dir --output-align-samp $fasta_file $namesorted_sam >/dev/null  2> $express_results.log"
+     &process_cmd("$current_express_exec  -o $express_dir --output-align-samp $fasta_file $namesorted_sam >/dev/null  2> $express_results.log"
      ) unless -s "$express_dir/results.xprs";
      confess "Express failed to produce output\n"
        unless -s "$express_dir/results.xprs";
@@ -2897,8 +2883,7 @@ sub perform_correct_bias($$$) {
     chomp($fasta_count);
     $timer->attr( min => 0, max => $fasta_count );
     open( EXPR, ">$express_results" ) || die($!);
-    print EXPR
-"bundle_id\ttarget_id\tlength\teff_length\ttot_counts\tuniq_counts\test_counts\teff_counts\tambig_distr_alpha\tambig_distr_beta\tfpkm\tfpkm_conf_low\tfpkm_conf_high\tsolvable\ttpm\n";
+    print EXPR "bundle_id\ttarget_id\tlength\teff_length\ttot_counts\tuniq_counts\test_counts\teff_counts\tambig_distr_alpha\tambig_distr_beta\tfpkm\tfpkm_conf_low\tfpkm_conf_high\tsolvable\ttpm\n";
     my $fasta_obj      = new Fasta_reader($fasta_file);
     my $bundle_counter = 1;
 
