@@ -221,7 +221,7 @@ use Bio::SeqFeature::Generic;
 use Bio::SeqFeature::Lite;
 $| = 1;
 
-$ENV{'PATH'} = "$RealBin:$RealBin/3rd_party/bin/:$RealBin/util:$RealBin/3rd_party/salmon/bin/" . $ENV{'PATH'};
+$ENV{'PATH'} = "$RealBin:$RealBin/3rd_party/bin:$RealBin/util:$RealBin/3rd_party/salmon/bin:" . $ENV{'PATH'};
 #################################
 my (
      $debug,                   $input_reference_file,
