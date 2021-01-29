@@ -284,13 +284,13 @@ print_statistics_normalized = function(statsfile){
 	dev.off()
 	
 	#r/fpkm
-	p_rpkm<-ggplot(data,aes(x=RPKM,fill=Readset)) + geom_density(alpha=.3) + scale_x_continuous(limits = c(quantile(data$RPKM,0.33), quantile(data$RPKM,0.66))) 
-	p_e_fpkm<-ggplot(data,aes(x=Express_FPKM,fill=Readset)) + geom_density(alpha=.3)  + scale_x_continuous(limits = c(quantile(data$Express_FPKM,0.33), quantile(data$Express_FPKM,0.66)))
-	p_tmm_fpkm<-ggplot(data,aes(x=TMM.FPKM,fill=Readset)) + geom_density(alpha=.3)  + scale_x_continuous(limits = c(quantile(data$TMM.FPKM,0.33), quantile(data$TMM.FPKM,0.66)))
-	fileout = paste(statsfile,'_fpkm.svg',sep='')
-	svg(file=fileout, width = 10, height = 10)
-	multiplot(p_rpkm,p_e_fpkm,p_tmm_fpkm,cols=1)
-	dev.off()
+#	p_rpkm<-ggplot(data,aes(x=RPKM,fill=Readset)) + geom_density(alpha=.3) + scale_x_continuous(limits = c(quantile(data$RPKM,0.33), quantile(data$RPKM,0.66))) 
+#	p_e_fpkm<-ggplot(data,aes(x=Express_FPKM,fill=Readset)) + geom_density(alpha=.3)  + scale_x_continuous(limits = c(quantile(data$Express_FPKM,0.33), quantile(data$Express_FPKM,0.66)))
+#	p_tmm_fpkm<-ggplot(data,aes(x=TMM.FPKM,fill=Readset)) + geom_density(alpha=.3)  + scale_x_continuous(limits = c(quantile(data$TMM.FPKM,0.33), quantile(data$TMM.FPKM,0.66)))
+#	fileout = paste(statsfile,'_fpkm.svg',sep='')
+#	svg(file=fileout, width = 10, height = 10)
+#	multiplot(p_rpkm,p_e_fpkm,p_tmm_fpkm,cols=1)
+#	dev.off()
 	
 	#tpm
 	p_tmm_tpm<-ggplot(data,aes(x=TMM.TPM,fill=Readset)) + geom_density(alpha=.3) + scale_x_continuous(limits = c(quantile(data$TMM.TPM,0.33), quantile(data$TMM.TPM,0.66)))
@@ -604,7 +604,7 @@ edgeR_DE_postanalysis = function (aliases,edgeR_obj, edgeR_obj_de, baseout='tmp'
 }
 
 
-edgeR_gene_plots_all = function(genesaliases_file,matrixfile='tmp',outdir='./',do_png=FALSE,threads=5,type='FPKM'){
+edgeR_gene_plots_all = function(genesaliases_file,matrixfile='tmp',outdir='./',do_png=FALSE,threads=5,type='TPM'){
 	require(ggplot2,quietly=T,warn.conflicts=F)
 	require(foreach,quietly=T,warn.conflicts=F)
 	require(doMC,quietly=T,warn.conflicts=F)

@@ -17,7 +17,7 @@ Speed up graph making by using memory (parallelizing doesn't work)
 
 =head1 DESCRIPTION
 
- requires express v1.3.0+
+ requires salmon v1.4.0
  
  It accepts a reference gene FASTA and aligns readsets against it using single-end mode of BWA.
  Since alignments take the longest, it sacrifices speed for low memory usage (uses sqlite) so it is good weak for web-server with a few GB of memory or very large datasets (TODO: farm out alignments)
@@ -28,9 +28,9 @@ Speed up graph making by using memory (parallelizing doesn't work)
  if sequence exists in database with alignments, then don't re-align. use md5 on sequence 
  created server to run these things on
  Added kangade
- added fpkm via express
+ added fpkm via express - removed it in favour of salmon
  added bowtie2; made it the default; accepts fastq.bz2
- when not in contextual alignment, express processes each reference sequence separately (yes, it is incorrect but db results would be incorrect otherwise and are getting the fpkm...)
+ when not in contextual alignment, salmon processes each reference sequence separately (yes, it is incorrect but db results would be incorrect otherwise and are getting the fpkm...)
  added edgeR
  added html5 interactive heatmap and scatterplot
  housekeeping genes are found automatically using pvalue 1 +/-0.05 
@@ -109,7 +109,6 @@ test times:
             -no_js_graphs           => If producing edgeR graphs, then don't produce javascript based graphs.
             -contextual             => Complete realignment of all genes in order to run a correction of biases properly. Does not read/store data in the cache
             -use_bwa                => Use BWA instead of Bowtie2. Much slower.
-            -isoforms               => Use eXpress to correct Illumina sequencing biases and transcript isofrm assignments. Increases runtime. Use -contextual for accuracy 
             -prepare_only           => Quit after post-processing readsets and writing initial DB
             -seeddb :s              => Initialize database using this database file (e.g. after -prepare_only)
             -kanga                  => Use kanga instead of bowtie2 for alignments. It requires a LOT of memory (ca. 1Gb per million reads) and post-processing paired-end is much slower than bowtie  
@@ -127,22 +126,22 @@ test times:
             -never_skip             => Always process graph for gene/readset pair, regardless of cutoffs
             -sort_memory_gb :i      => Max memory (in Gb) to use for sorting (def 10). Make sure this is less than the available/requested RAM
             -remove_redund          => Remove redundant sequences (identical) in -infile
-            -extra_options :s       => Extra options for e.g. express, exclude any initial --dashes from the express options (eg give as "express:rf-stranded;express:max-read-len 250" or "express:aux-param-file $PWD/align.all.params.xprs", including the "quotes" ). Only express implemented currently
-            -genomewide             => Your input provides all the genes of the genome, i.e. expecting to have all reads in the readset aligning. This influences eXpress only. Probably needed for genomewide analyses that have readsets with large amount of non coding sequence (e.g. rDNA). Also stores data in database cache
             -only_alignments        => Stop after all alignments are completed. Good for large data/alignments and HPC environments. Use without -contextual (and use with -nographs). 
             -cleanup                => Delete alignments after successful completion
             -no_pairwise            => Do not do pairwise comparisons (kangade and edgeR). Otherwise, this can be VERY memory intense for genomewide for many (20+) libraries (160Gb)
             -no_check               => When re-starting, do not check database if every gene has been stored. Do not use if you're adding new genes or database was incomplete (it will crash later), but use if you're restarting and have lots of genes.
-            -options_single :s      => Extra options  (on top of -extra_options). These will apply only on single-end readsets (given without a matching -2read); e.g. "express:r-stranded". Only Express supported currently
             -verbose                => Print on the screen any system commands that are run. Caution, that will produce a lot of output on the screen they are kept in the .log file anyway).
             -no_pdf                 => Do not convert gene coverage/expression images to multi-page PDF. Otherwise, will print a PDF for every 500 genes per PDF (slow for large genomes & dozens of readsets)
 	    -sort_tmp :s	    => Temporary directory to use for sorting files. It will need to be on a fast disk that has sufficient free space (depends on number of -threads)
 
- Express options:
+ Salmon options:
 
-            -express_min_bias :i    => Minimum number of reads (not fragments) before allowing express to undertake bias corrections (only if -isoform is used). Set it to 0 if you're using an external aux-param-file. Defaults to 10 million reads
-	    -nobatch_express        => eXpress is normally ran with 2 additional 'batch' post-processing searches. Rarely a readset will cause this to hung (for days). This option disables the batch search (recommend to only use it with -reuse and -over and only for the readset that causes the issue)
-            -readset_separation     => Expected insert size for eXpress (approximately). Defaults to 250.
+            -isoforms               => Use salmon to correct Illumina sequencing biases and transcript isofrm assignments. Increases runtime. Use -contextual for accuracy 
+            -genomewide             => Your input provides all the genes of the genome, i.e. expecting to have all reads in the readset aligning. This influences salmon only. Probably needed for genomewide analyses that have readsets with large amount of non coding sequence (e.g. rDNA). Also stores data in database cache
+            -extra_options :s       => Extra options for e.g. salmon, exclude any initial --dashes from the salmon options (eg give as "salmon:minAssignedFrags 5;salmon:noLengthCorrection;salmon:libType SF", including the "quotes" ). I highly recommend you include the salmon:libType
+            -readset_separation     => Expected insert size for Salmon (approximately). Defaults to 500.
+	    -is_quantseq	    => Tell the program that you've sequenced only the end(s) of the genes
+
 
 NB: I highly recommend you use either the latest version of Bowtie (2.1.0+) or Kanga for alignments (-kanga). I often had issues with Bowtie2 (2.0.5-) on NFS and High Perfomance Computing... Kanga is faster than Bowtie2 but my post-processing makes the whole process a lot slower
         
@@ -153,14 +152,6 @@ NB: I highly recommend you use either the latest version of Bowtie (2.1.0+) or K
   Cannot find md5 data for Msex2.02821.2
 
  You are trying to reuse an existing directory but not using an existing SQLite database. This error happens because the file *.md5 *.checked and *.depth.completed exists in your result directory. Please delete them and restart (rm -f outdir/*md5 outdir/*checked). Do not set -resume
-
-2. eXpress is taking forever (> 12h)
-  
- I noticed that this happens sometimes with RNA-Seq readsets. I don't know why, eXpress seems to have finished parsing the initial online algorithm and get hung on the batch algorithm. Use the option -nobatch_express to prevent express from running a batch search.
-
-3. What does eXpress do? Why not use RSEM?
-
- See http://bio.math.berkeley.edu/eXpress/manual.html 
 
 =head1 AUTHORS
 
@@ -230,7 +221,7 @@ use Bio::SeqFeature::Generic;
 use Bio::SeqFeature::Lite;
 $| = 1;
 
-$ENV{'PATH'} = "$RealBin:$RealBin/3rd_party/bin/:$RealBin/util:" . $ENV{'PATH'};
+$ENV{'PATH'} = "$RealBin:$RealBin/3rd_party/bin/:$RealBin/util:$RealBin/3rd_party/salmon/bin/" . $ENV{'PATH'};
 #################################
 my (
      $debug,                   $input_reference_file,
@@ -249,16 +240,17 @@ my (
 );
 
 my $db_hostname = 'localhost';
+my $sqlite3_exec =&check_program('sqlite3');
 my (
-     $sqlite3_exec,             $ps2pdf_exec,  $inkscape_exec,
+     $ps2pdf_exec,  $inkscape_exec,
      $convert_imagemagick_exec, $pdfcrop_exec, $biokanga_exec,
      $samtools_exec,            $bowtie2_exec, $bwa_exec,
-     $express_exec,             $bamtools_exec, $sort_exec
+     $salmon_exec,             $bamtools_exec, $sort_exec
   )
   = &check_program_optional(
-                             'sqlite3', 'gs',       'inkscape', 'convert',
+                              'gs',       'inkscape', 'convert',
                              'pdfcrop', 'biokanga', 'samtools', 'bowtie2',
-                             'bwa',     'express',  'bedtools', 'sort'
+                             'bwa',     'salmon',  'bedtools', 'sort'
   );
 
 if ($ps2pdf_exec) {
@@ -267,7 +259,7 @@ if ($ps2pdf_exec) {
 }
 
 # TODO If there exist a sizeable number of housekeeping transcripts that should not be DE, the the dispersion could be estimated from them.
-my $readset_separation     = 250;
+my $readset_separation     = 500;
 my $fragment_max_length    = 800;
 my $edgeR_dispersion       = 0.4;
 my $minCPM                 = 2;
@@ -281,7 +273,7 @@ my $process_cutoff         = 1;
 my $binary_min_coverage    = 0.3;
 my $binary_min_reads       = 4;
 my $sort_memory            = 10;
-my $express_min_bias = 10*10^6;
+my $salmon_min_bias = 2*10^6; # 2 mil as we often have few reads
 my (
      $uid,               $lib_alias_file,     $demand_all_readsets,
      $use_kanga,         @use_existing_bam,   $overwrite_results,
@@ -290,10 +282,10 @@ my (
      $user_ref_sequence, $do_kangade,         $main_output_dir,
      $use_bwa,           $prepare_input_only, @sample_overlays,
      $initial_db,        $resume,             $gene_coverage_graphs_only,
-     %binary_table,      $never_skip,         $nobatch_express,
+     %binary_table,      $never_skip,         
      $extra_options,     $genomewide,         $only_alignments,
      $options_single,    $no_js_graphs,       $do_png,
-     $no_pdf,            $no_pairwise,        $verbose
+     $no_pdf,            $no_pairwise,        $verbose, $is_quantseq
 );
 my $cwd = getcwd;
 my $given_cmd = $0 . " " . join( " ", @ARGV );
@@ -349,7 +341,6 @@ pod2usage $! unless GetOptions(
  'never_skip'            => \$never_skip,
  'memory_gb|sort_memory_gb:i' => \$sort_memory,
  'remove_redund'              => \$remove_redund,
- 'nobatch_express'            => \$nobatch_express,
  'readset_separation:i'       => \$readset_separation,
  'extra_options:s'            => \$extra_options,
  'genomewide'                 => \$genomewide,
@@ -360,7 +351,8 @@ pod2usage $! unless GetOptions(
  'nopairwise|no_pairwise'     => \$no_pairwise,
  'options_single:s'           => \$options_single,
  'nopdf|no_pdf'               => \$no_pdf,
- 'express_min_bias:i'         => \$express_min_bias,
+ 'salmon_min_bias:i'          => \$salmon_min_bias,
+ 'is_quantseq'		      => \$is_quantseq,
 );
 
 die
@@ -393,9 +385,9 @@ my $alignment_thread_helper = new Thread_helper(int($threads/2));
 
 my $samtools_threads = $threads > 5 ? 5 : $threads;
 my $sam_sort_memory = int($sort_memory / $samtools_threads); 
-my ( $extra_express, %single_end_readsets, $express_options_single );
-my $kanga_threads = $threads <= 8 ? $threads : 8;
-my $R_threads = $threads <= 8 ? $threads : 8;
+my ( $extra_salmon, %single_end_readsets, $salmon_options_single );
+my $kanga_threads = $threads <= 8 ? $threads : 10;
+my $R_threads = $threads <= 8 ? $threads : 10;
 
 
 $uid = &get_uid_time('dew') unless $uid;
@@ -436,12 +428,12 @@ my (
      $start_fold_change,
      $check_fold_change,
      $add_kangade_fold_change,
-     $add_express_fold_change,
+     $add_salmon_fold_change,
      $add_raw_fold_change,
      $get_kangade_fold_change,
-     $get_express_fold_change,
+     $get_salmon_fold_change,
      $get_raw_fold_change,
-     $update_express_expression_statistics,
+     $update_salmon_expression_statistics,
      $update_kangade_expression_statistics,
      $update_rpkm_expression_statistics,
      $get_readset_filename
@@ -482,18 +474,16 @@ if ($only_alignments) {
 
 # get TMM normalized expression. this is relatively fast.
 my $check_lines = `wc -l < $counts_expression_level_matrix`;
-confess
-  "No expression data available (empty $counts_expression_level_matrix)!\n"
+confess "No expression data available (empty $counts_expression_level_matrix)!\n"
   unless ( -s $counts_expression_level_matrix && $check_lines > 1 );
-my ( $effective_expression_level_matrix_TMM_fpkm,
-     $effective_expression_level_matrix_TMM_tpm )
+my ( $effective_expression_level_matrix_TMM_tpm )
   = &perform_TMM_normalization_edgeR($counts_expression_level_matrix);
 
-$check_lines = `wc -l < $effective_expression_level_matrix_TMM_fpkm `
-  if $effective_expression_level_matrix_TMM_fpkm;
+$check_lines = `wc -l < $effective_expression_level_matrix_TMM_tpm `
+  if $effective_expression_level_matrix_TMM_tpm;
 confess
-"edgeR did not produce any TMM output ($effective_expression_level_matrix_TMM_fpkm)!\n"
-  unless ( -s $effective_expression_level_matrix_TMM_fpkm && $check_lines > 1 );
+"edgeR did not produce any TMM output ($effective_expression_level_matrix_TMM_tpm)!\n"
+  unless ( -s $effective_expression_level_matrix_TMM_tpm && $check_lines > 1 );
 
 # this needs the database in order to do pairwise comparisons...
 if ( !$no_pairwise ) {
@@ -526,8 +516,6 @@ if ($gene_coverage_graphs_only) {
 unless ($no_graphs){
 	&process_edgeR_graphs_overview( $effective_expression_level_matrix_TMM_tpm,
         	                        $result_dir . '/gene_expression_tpm/','TPM' );
-	&process_edgeR_graphs_overview( $effective_expression_level_matrix_TMM_fpkm,
-        	                        $result_dir . '/gene_expression_fpkm/','FPKM' );
 }
 
 &process_completion();
@@ -621,66 +609,44 @@ sub sqlite_init() {
  }
  if ($db_existed) {
   $dbh->sqlite_backup_from_file($db_file);
- }
+  my $res = `$sqlite3_exec $db_file "PRAGMA integrity_check"`;
+  die "Database integrity check failed for $db_file. Delete and try again\n" if ($res && $res!~/^ok/);
+ } 
  else {
   if ($resume || $no_checks){
-   print
-    "Warning! Database does not seem to be ok, will recreate and not resume.\n";
-   undef($resume);
-   undef($no_checks);
+    print
+     "Warning! Database $db_file does not seem to be ok, will recreate and not resume.\n";
+    undef($resume);
+    undef($no_checks);
   }
   print "\tCreating database...\n";
   $dbh->do("PRAGMA encoding = 'UTF-8'");
 
 #$dbh->do("CREATE TABLE file_alignments(file_md5sum char(32),readset_id integer,bam blob)"    );
 #$dbh->do("CREATE UNIQUE INDEX file_alignments_idx1 ON file_alignments(file_md5sum,readset_id)"    );
-  $dbh->do(
-"CREATE TABLE sequence_data(seq_md5hash char(32) primary key,seq_length integer,housekeeping integer DEFAULT 0)"
-  );
+  $dbh->do("CREATE TABLE sequence_data(seq_md5hash char(32) primary key,seq_length integer,housekeeping integer DEFAULT 0)"  );
   $dbh->do("CREATE TABLE sequence_aliases (seq_md5hash char(32), alias text)");
-  $dbh->do(
-          "CREATE INDEX sequence_aliases_idx ON sequence_aliases(seq_md5hash)");
-  $dbh->do(
-"CREATE TABLE readsets (readset_id INTEGER PRIMARY KEY,readset_file varchar(255),total_reads integer, is_paired varchar, alias varchar(255), readlength_median integer, ctime timestamp)"
-  );
+  $dbh->do("CREATE INDEX sequence_aliases_idx ON sequence_aliases(seq_md5hash)");
+  $dbh->do("CREATE TABLE readsets (readset_id INTEGER PRIMARY KEY,readset_file varchar(255),total_reads integer, is_paired varchar, alias varchar(255), readlength_median integer, ctime timestamp)"  );
   $dbh->do("CREATE UNIQUE INDEX readsets_idx1 ON readsets(readset_file)");
-  $dbh->do(
-"CREATE TABLE expression_statistics (seq_md5hash char(32), readset_id integer, gene_length_coverage REAL, gene_length_coverage_mean REAL, no_coverage integer, rpkm integer, aligned_reads_per_base REAL, gene_length_coverage_median integer, total_aligned_reads integer, gene_length_coverage_max integer, gene_length_coverage_sd REAL, express_fpkm integer, express_eff_counts REAL,  express_tpm REAL, kangade_counts integer)"
-  );
-  $dbh->do(
-"CREATE UNIQUE INDEX expression_statistics_idx1 ON expression_statistics(seq_md5hash,readset_id)"
-  );
+  $dbh->do("CREATE TABLE expression_statistics (seq_md5hash char(32), readset_id integer, gene_length_coverage REAL, gene_length_coverage_mean REAL, no_coverage integer, rpkm integer, aligned_reads_per_base REAL, gene_length_coverage_median integer, total_aligned_reads integer, gene_length_coverage_max integer, gene_length_coverage_sd REAL, salmon_eff_counts REAL,  salmon_tpm REAL, kangade_counts integer)"  );
+  $dbh->do("CREATE UNIQUE INDEX expression_statistics_idx1 ON expression_statistics(seq_md5hash,readset_id)"  );
 
   #tmp for uncached
-  $dbh->do(
-"CREATE TABLE expression_statistics_tmp (seq_md5hash char(32), readset_id integer, gene_length_coverage REAL, gene_length_coverage_mean REAL, no_coverage integer, rpkm integer, aligned_reads_per_base REAL, gene_length_coverage_median integer, total_aligned_reads integer, gene_length_coverage_max integer, gene_length_coverage_sd REAL, express_fpkm integer, express_eff_counts REAL, express_tpm REAL , kangade_counts integer)"
-  );
-  $dbh->do(
-"CREATE UNIQUE INDEX expression_statistics_tmp_idx1 ON expression_statistics_tmp(seq_md5hash,readset_id)"
-  );
+  $dbh->do("CREATE TABLE expression_statistics_tmp (seq_md5hash char(32), readset_id integer, gene_length_coverage REAL, gene_length_coverage_mean REAL, no_coverage integer, rpkm integer, aligned_reads_per_base REAL, gene_length_coverage_median integer, total_aligned_reads integer, gene_length_coverage_max integer, gene_length_coverage_sd REAL, salmon_eff_counts REAL, salmon_tpm REAL , kangade_counts integer)"  );
+  $dbh->do("CREATE UNIQUE INDEX expression_statistics_tmp_idx1 ON expression_statistics_tmp(seq_md5hash,readset_id)"  );
 
   # r-tree?
-  $dbh->do(
-    "CREATE TABLE depth (seq_md5hash char(32), readset_id integer, data blob)");
-  $dbh->do("CREATE INDEX depth_idx1 ON depth(seq_md5hash,readset_id)");
-  $dbh->do(
-"CREATE TABLE depth_tmp (seq_md5hash char(32), readset_id integer, data blob)"
-  );
+  $dbh->do(    "CREATE TABLE depth (seq_md5hash char(32), readset_id integer, data blob)");  $dbh->do("CREATE INDEX depth_idx1 ON depth(seq_md5hash,readset_id)");
+  $dbh->do("CREATE TABLE depth_tmp (seq_md5hash char(32), readset_id integer, data blob)"  );
   $dbh->do("CREATE INDEX depth_tmp_idx1 ON depth_tmp(seq_md5hash,readset_id)");
-  $dbh->do(
-"CREATE TABLE kangade_analysis (seq_md5hash char(32), readset1_id INTEGER, readset2_id INTEGER,Classification INTEGER,Score INTEGER,DECntsScore INTEGER,PearsonScore INTEGER,CtrlUniqueLoci INTEGER,"
+  $dbh->do("CREATE TABLE kangade_analysis (seq_md5hash char(32), readset1_id INTEGER, readset2_id INTEGER,Classification INTEGER,Score INTEGER,DECntsScore INTEGER,PearsonScore INTEGER,CtrlUniqueLoci INTEGER,"
      . "ExprUniqueLoci INTEGER,CtrlExprLociRatio INTEGER,PValueMedian REAL,PValueLow95 REAL,PValueHi95 REAL,TotCtrlCnts INTEGER,TotExprCnts INTEGER,TotCtrlExprCnts INTEGER,ObsFoldChange REAL,FoldMedian REAL,"
      . "FoldLow95 REAL,FoldHi95 REAL,ObsPearson REAL,PearsonMedian REAL,PearsonLow95 REAL,PearsonHi95 REAL)"
   );
-  $dbh->do(
-"CREATE UNIQUE INDEX kangade_analysis_idx1 ON kangade_analysis(seq_md5hash,readset1_id,readset2_id)"
-  );
-  $dbh->do(
-"CREATE TABLE fold_changes (seq_md5hash char(32), readset1_id INTEGER, readset2_id INTEGER, raw_rpkm REAL, express_fpkm REAL, express_effective_counts REAL,express_tpm REAL , kangade_observed REAL,housekeeping integer DEFAULT 0)"
-  );
-  $dbh->do(
-"CREATE UNIQUE INDEX fold_changes_idx1 ON fold_changes(seq_md5hash,readset1_id,readset2_id)"
-  );
+  $dbh->do("CREATE UNIQUE INDEX kangade_analysis_idx1 ON kangade_analysis(seq_md5hash,readset1_id,readset2_id)"  );
+  $dbh->do("CREATE TABLE fold_changes (seq_md5hash char(32), readset1_id INTEGER, readset2_id INTEGER, raw_rpkm REAL, salmon_effective_counts REAL,salmon_tpm REAL , kangade_observed REAL,housekeeping integer DEFAULT 0)"  );
+  $dbh->do("CREATE UNIQUE INDEX fold_changes_idx1 ON fold_changes(seq_md5hash,readset1_id,readset2_id)"  );
  }
  ### PRAGMAS for speed
  $dbh->do("PRAGMA journal_mode = MEMORY");
@@ -698,8 +664,8 @@ sub sqlite_init() {
  my $add_kangade_fold_change = $dbh->prepare(
 "UPDATE fold_changes SET kangade_observed=? WHERE seq_md5hash=? AND readset1_id=(SELECT readset_id from readsets WHERE readset_file=?) AND readset2_id=(SELECT readset_id from readsets WHERE readset_file=?)"
  );
- my $add_express_fold_change = $dbh->prepare(
-"UPDATE fold_changes SET express_fpkm=?,express_effective_counts=?,express_tpm=? WHERE seq_md5hash=? AND readset1_id=(SELECT readset_id from readsets where readset_file=?) AND readset2_id=(SELECT readset_id from readsets where readset_file=?)"
+ my $add_salmon_fold_change = $dbh->prepare(
+"UPDATE fold_changes SET salmon_effective_counts=?,salmon_tpm=? WHERE seq_md5hash=? AND readset1_id=(SELECT readset_id from readsets where readset_file=?) AND readset2_id=(SELECT readset_id from readsets where readset_file=?)"
  );
  my $add_raw_fold_change = $dbh->prepare(
 "UPDATE fold_changes SET raw_rpkm=? WHERE seq_md5hash=? AND readset1_id=(SELECT readset_id from readsets where readset_file=?) AND readset2_id=(SELECT readset_id from readsets where readset_file=?)"
@@ -707,8 +673,8 @@ sub sqlite_init() {
  my $get_kangade_fold_change = $dbh->prepare(
 "SELECT kangade_observed FROM fold_changes WHERE seq_md5hash=? AND readset1_id=(SELECT readset_id from readsets where readset_file=?) AND readset2_id=(SELECT readset_id from readsets where readset_file=?)"
  );
- my $get_express_fold_change = $dbh->prepare(
-"SELECT express_fpkm, express_effective_counts FROM fold_changes WHERE seq_md5hash=? AND readset1_id=(SELECT readset_id from readsets where readset_file=?) AND readset2_id=(SELECT readset_id from readsets where readset_file=?)"
+ my $get_salmon_fold_change = $dbh->prepare(
+"SELECT salmon_tpm, salmon_effective_counts FROM fold_changes WHERE seq_md5hash=? AND readset1_id=(SELECT readset_id from readsets where readset_file=?) AND readset2_id=(SELECT readset_id from readsets where readset_file=?)"
  );
  my $get_raw_fold_change = $dbh->prepare(
 "SELECT raw_rpkm FROM fold_changes WHERE seq_md5hash=? AND readset1_id=(SELECT readset_id from readsets where readset_file=?) AND readset2_id=(SELECT readset_id from readsets where readset_file=?)"
@@ -764,8 +730,8 @@ sub sqlite_init() {
  my $update_expression_statistics = $dbh->prepare(
 "UPDATE $expression_statistics_table set gene_length_coverage=?, gene_length_coverage_mean=?, no_coverage=?, aligned_reads_per_base=?, gene_length_coverage_median=?, gene_length_coverage_max=?, gene_length_coverage_sd=? WHERE seq_md5hash=? AND readset_id=(SELECT readset_id from readsets where readset_file=?)"
  );
- my $update_express_expression_statistics = $dbh->prepare(
-"UPDATE $expression_statistics_table set express_fpkm=?,express_eff_counts=?,express_tpm=? WHERE seq_md5hash=? AND readset_id=(SELECT readset_id from readsets where readset_file=?)"
+ my $update_salmon_expression_statistics = $dbh->prepare(
+"UPDATE $expression_statistics_table set salmon_eff_counts=?,salmon_tpm=? WHERE seq_md5hash=? AND readset_id=(SELECT readset_id from readsets where readset_file=?)"
  );
  my $update_kangade_expression_statistics = $dbh->prepare(
 "UPDATE $expression_statistics_table set kangade_counts=? WHERE seq_md5hash=? AND readset_id=(SELECT readset_id from readsets where readset_file=?)"
@@ -820,12 +786,12 @@ sub sqlite_init() {
           $start_fold_change,
           $check_fold_change,
           $add_kangade_fold_change,
-          $add_express_fold_change,
+          $add_salmon_fold_change,
           $add_raw_fold_change,
           $get_kangade_fold_change,
-          $get_express_fold_change,
+          $get_salmon_fold_change,
           $get_raw_fold_change,
-          $update_express_expression_statistics,
+          $update_salmon_expression_statistics,
           $update_kangade_expression_statistics,
           $update_rpkm_expression_statistics,
           $get_readset_filename
@@ -864,7 +830,7 @@ sub sqlite_destroy() {
  $check_expression_statistics->finish();
  $get_readset->finish();
  $update_expression_statistics->finish();
- $update_express_expression_statistics->finish();
+ $update_salmon_expression_statistics->finish();
  $update_kangade_expression_statistics->finish();
  $add_readset->finish();
  $update_readset->finish();
@@ -876,10 +842,10 @@ sub sqlite_destroy() {
  $start_fold_change->finish();
  $check_fold_change->finish();
  $add_kangade_fold_change->finish();
- $add_express_fold_change->finish();
+ $add_salmon_fold_change->finish();
  $add_raw_fold_change->finish();
  $get_kangade_fold_change->finish();
- $get_express_fold_change->finish();
+ $get_salmon_fold_change->finish();
  $update_rpkm_expression_statistics->finish();
  $get_raw_fold_change->finish();
 
@@ -888,7 +854,7 @@ sub sqlite_destroy() {
   #empty temporary tables and re-create their schema
   $dbh->do("DROP TABLE expression_statistics_tmp");
   $dbh->do(
-"CREATE TABLE expression_statistics_tmp (seq_md5hash char(32), readset_id integer, gene_length_coverage REAL, gene_length_coverage_mean REAL, no_coverage integer, rpkm integer, aligned_reads_per_base REAL, gene_length_coverage_median integer, total_aligned_reads integer, gene_length_coverage_max integer, gene_length_coverage_sd REAL, express_fpkm integer, express_eff_counts REAL, express_tpm REAL , kangade_counts integer)"
+"CREATE TABLE expression_statistics_tmp (seq_md5hash char(32), readset_id integer, gene_length_coverage REAL, gene_length_coverage_mean REAL, no_coverage integer, rpkm integer, aligned_reads_per_base REAL, gene_length_coverage_median integer, total_aligned_reads integer, gene_length_coverage_max integer, gene_length_coverage_sd REAL, salmon_eff_counts REAL, salmon_tpm REAL , kangade_counts integer)"
   );
   $dbh->do(
 "CREATE UNIQUE INDEX expression_statistics_tmp_idx1 ON expression_statistics_tmp(seq_md5hash,readset_id)"
@@ -1078,16 +1044,16 @@ sub sqlite_add_main_expression_statistics($) {
                            $gene_length_coverage_max,  $gene_length_coverage_sd,      $seq_md5hash, $readset );
 }
 
-sub sqlite_add_express_expression_statistics() {
- my ( $seq_md5hash, $readset, $fpkm, $eff_counts, $tpm ) = @_;
+sub sqlite_add_salmon_expression_statistics() {
+ my ( $seq_md5hash, $readset, $eff_counts, $tpm ) = @_;
  my $r =
-   $update_express_expression_statistics->execute( $fpkm, $eff_counts, $tpm,
+   $update_salmon_expression_statistics->execute( $eff_counts, $tpm,
                                                    $seq_md5hash, $readset );
  my $check = &sqlite_get_expression_statistics( $seq_md5hash, $readset );
- if ( !$check || !defined( $check->{'express_fpkm'} ) ) {
+ if ( !$check || !defined( $check->{'salmon_tpm'} ) ) {
 
    # warn Dumper $check if $debug;
-  die "Could not add express expression statistics for: $seq_md5hash,$readset,$fpkm,$eff_counts,$tpm\n";
+  die "Could not add salmon expression statistics for: $seq_md5hash,$readset,$eff_counts,$tpm\n";
  }
 }
 
@@ -1296,26 +1262,33 @@ sub perform_checks_preliminary() {
  print LOG "#Started: " . &mytime . "\n";
 
  #"express:r-stranded;express:max-read-len 250"
+
+ my $is_lib_provided; # to add ' --libType a ';
+
  if ($extra_options) {
   my @opt1 = split( ';', $extra_options );
   foreach my $op1 (@opt1) {
    my @opt2 = split( ':', $op1 );
    next unless $opt2[1];
-   $extra_express .= ' --' . $opt2[1] if $opt2[0] && $opt2[0] eq 'express';
+   if ($opt2[1] eq 'libType'){$is_lib_provided++;}
+   $extra_salmon .= ' --' . $opt2[1] if $opt2[0] && $opt2[0] eq 'salmon';
   }
-  print "All data: Applying extra express options: $extra_express\n";
-  print LOG "All data: Applying extra express options: $extra_express\n";
+  print "All data: Applying extra salmon options: $extra_salmon\n";
+  print LOG "All data: Applying extra salmon options: $extra_salmon\n";
  }
  if ($options_single) {
   my @opt1 = split( ';', $options_single );
   foreach my $op1 (@opt1) {
    my @opt2 = split( ':', $op1 );
-   $express_options_single .= ' --' . $opt2[1] if $opt2[0] eq 'express';
+   if ($opt2[1] eq 'libType'){$is_lib_provided++;}
+   $salmon_options_single .= ' --' . $opt2[1] if $opt2[0] eq 'salmon';
   }
-  print "SE data: Applying extra express options: $express_options_single\n";
+  print "SE data: Applying extra salmon options: $salmon_options_single\n";
   print LOG
-    "SE data: Applying extra express options: $express_options_single\n";
+    "SE data: Applying extra salmon options: $salmon_options_single\n";
  }
+
+ $extra_salmon .= ' --libType a ' if (!$is_lib_provided);
 
  mkdir($edgeR_dir) unless -d $edgeR_dir;
  mkdir( $edgeR_dir . '/js_plots' ) unless -d $edgeR_dir . '/js_plots';
@@ -1616,6 +1589,12 @@ sub prepare_input_data() {
   &sqlite_backup(1) if !$db_use_file && $do_backup;
  }
 
+ if ($prepare_input_only) {
+  warn "User requested to stop after preparing files\n";
+  sqlite_destroy();
+  exit;
+ }
+
  # prepare file for alignments
  if ($use_kanga) {
   unless ( -s $file_to_align . '.kangax' ) {
@@ -1644,11 +1623,6 @@ sub prepare_input_data() {
    ) unless -s "$file_to_align.rev.1.bt2";
    print " Done!\n";
   }
- }
- if ($prepare_input_only) {
-  warn "User requested to stop after preparing files\n";
-  sqlite_destroy();
-  exit;
  }
  return $file_to_align;
 }
@@ -1716,11 +1690,11 @@ sub starts_alignments() {
 
    if (!$already_done_alignments{$readset} && @use_existing_bam) {    #name or coord sorted
       #&prepare_alignment_from_existing( $file_to_align, $i,  $baseout, $alignment_bam_file, $alignment_sam_file  );
-      my $thread = threads->create('prepare_alignment_from_existing',$file_to_align, $i,  $baseout, $alignment_bam_file, $alignment_sam_file  );
+      my $thread = threads->create('prepare_alignment_from_existing',$file_to_align, $i,  $alnbase, $alignment_bam_file, $alignment_sam_file  );
       $alignment_thread_helper->add_thread($thread);
    }
    else {
-    my $thread = threads->create('prepare_alignment',$file_to_align, $i , $baseout, $alignment_bam_file, $alignment_sam_file );
+    my $thread = threads->create('prepare_alignment',$file_to_align, $i , $alnbase, $alignment_bam_file, $alignment_sam_file );
     $alignment_thread_helper->add_thread($thread);
 #    &prepare_alignment( $file_to_align, $i , $baseout, $alignment_bam_file, $alignment_sam_file );
    }
@@ -1743,10 +1717,10 @@ sub starts_alignments() {
    my ($rpkm_hashref, $eff_counts_hashref);
 
    if ( $already_done_alignments{$readset} ) {
-    my $express_results = $alignment_bam_file . ".express.results";
+    my $salmon_results = $alignment_bam_file . ".salmon.results";
     die "Supposedly existing alignment $alignment_bam_file does not exist. Any chance you're using an old database?\n" unless -s $alignment_bam_file;
      # can't thread this as it does DB operations
-    &process_express_bias( $express_results, $readset );
+    &process_salmon_bias( $salmon_results, $readset );
    }else{
     ($alignment_bam_file, $rpkm_hashref, $eff_counts_hashref ) = &perform_correct_bias( $alignment_bam_file, $file_to_align, $readset, $alignment_bam_file . '.namesorted' )
       if ($perform_bias_correction);
@@ -1848,7 +1822,7 @@ sub starts_alignments() {
       . " out of "
       . scalar(@readsets)
       . " readsets                \r";
-      &prepare_alignment( $new_file_to_align, $i , $baseout, $alignment_bam_file, $alignment_sam_file );
+      &prepare_alignment( $new_file_to_align, $i , $alnbase, $alignment_bam_file, $alignment_sam_file );
 
    ($alignment_bam_file, $rpkm_hashref, $eff_counts_hashref ) = &perform_correct_bias( $alignment_bam_file, $file_to_align, $readset, $alignment_bam_file . '.namesorted' )
    if ($perform_bias_correction);
@@ -2465,8 +2439,7 @@ sub align_bowtie2() {
    }
   }
   else {
-   &process_cmd(
-"$bamtools_exec convert -in $readset -format fastq | $bowtie2_exec --reorder -a --rdg 6,5 --rfg 6,5 --score-min L,-0.6,-0.4 --no-unal -q --threads $threads -x $file_to_align -U - -S $sam 2> $baseout.log"
+   &process_cmd("$bamtools_exec convert -in $readset -format fastq | $bowtie2_exec --reorder -a --rdg 6,5 --rfg 6,5 --score-min L,-0.6,-0.4 --no-unal -q --threads $threads -x $file_to_align -U - -S $sam 2> $baseout.log"
    ) unless -s "$baseout.log";
   }
  }
@@ -2483,7 +2456,11 @@ sub namesort_sam(){
  return $out if -s $out;
  &process_cmd("$samtools_exec view -H $sam > $out 2> /dev/null");
  confess "Can't produce $out. Is it a SAM file?\n" unless -s $out;
- &process_cmd("$samtools_exec view $sam 2> /dev/null| $sort_exec -T $sort_tmp -S $sort_memory_sub -nk4,4|$sort_exec -T $sort_tmp -S $sort_memory_sub -s -k3,3|$sort_exec -T $sort_tmp -S $sort_memory_sub -s -k1,1 >> $out" );
+ # one thing we have to do is remove reads that have an unmapped mate: this is a requirement for salmon etc
+ my $cmd = $perform_bias_correction
+	 ? "$samtools_exec view -F 12 $sam 2> /dev/null| $sort_exec -T $sort_tmp -S $sort_memory_sub -nk4,4|$sort_exec -T $sort_tmp -S $sort_memory_sub -s -k3,3|$sort_exec -T $sort_tmp -S $sort_memory_sub -s -k1,1 >> $out"
+	 : "$samtools_exec view $sam 2> /dev/null| $sort_exec -T $sort_tmp -S $sort_memory_sub -nk4,4|$sort_exec -T $sort_tmp -S $sort_memory_sub -s -k3,3|$sort_exec -T $sort_tmp -S $sort_memory_sub -s -k1,1 >> $out";
+ &process_cmd($cmd);
  unlink($sam);
  chdir($result_dir);
  link( fileparse($out), fileparse($sam));
@@ -2687,35 +2664,36 @@ sub process_alignments($) {
    . $alignment_proportion . ")\n";
 }
 
-sub process_express_bias() {
- my $express_results = shift;
+sub process_salmon_bias() {
+ my $salmon_results = shift;
  my $readset         = shift;
 
- warn "process_express_bias $express_results $readset\n" if $debug;
+ warn "process_salmon_bias $salmon_results $readset\n" if $debug;
 
  # final file created when all data are processed and stored.
- my $output = $express_results; 
- $output =~s/.express.results$/.depth.completed/;
- if ( -s $express_results && !-s $output) {
-  open( EXPRESS, $express_results ) || die($!);
-  my $header = <EXPRESS>;
-  while ( my $ln = <EXPRESS> ) {
+ my $output = $salmon_results; 
+ $output =~s/.salmon.results$/.depth.completed/;
+ if ( -s $salmon_results && !-s $output) {
+  open( SALMON, $salmon_results ) || die($!);
+  my $header = <SALMON>;
+  while ( my $ln = <SALMON> ) {
    chomp($ln);
    my @data = split( "\t", $ln );
-   next unless $data[10] && $data[7];
-   my $seq_md5hash = &sqlite_get_md5( $data[1] );
-   &sqlite_add_express_expression_statistics( $seq_md5hash, $readset,
-                                              sprintf( "%.2f", $data[10] ),
-                                              sprintf( "%.2f", $data[7] ),
-                                              sprintf( "%.2f", $data[14] ),
+   next unless $data[4];
+   my $seq_md5hash = &sqlite_get_md5( $data[0]);
+   # ( $seq_md5hash, $readset, $eff_counts, $tpm )
+   &sqlite_add_salmon_expression_statistics( $seq_md5hash, $readset,
+                                              sprintf( "%.2f", $data[4] ),
+                                              sprintf( "%.2f", $data[3] ),
    );
+
   }
-  close EXPRESS;
+  close SALMON;
  }
 }
 
 sub perform_correct_bias() {
- print &mytime   . "eXpress: performing Illumina bias and transcript assignment corrections\n";
+ print &mytime   . "salmon: performing Illumina bias and transcript assignment corrections\n";
  my ($original_bam, $fasta_file, $readset, $namesorted_sam )    = @_;
  my $original_bam_base = fileparse($original_bam);
  my $namesorted_bam =
@@ -2723,12 +2701,12 @@ sub perform_correct_bias() {
 #   ? $namesorted_sam :
     $namesorted_sam . '.bam';
 
- my $express_bam_base = $result_dir . $original_bam_base . ".express.sampled";
- my $express_bam      = $express_bam_base . '.bam';
- my $express_results  = $result_dir . $original_bam_base . ".express.results";
+ my $salmon_bam_base = $result_dir . $original_bam_base . ".salmon.sampled";
+ my $salmon_bam      = $salmon_bam_base . '.bam';
+ my $salmon_results  = $result_dir . $original_bam_base . ".salmon.results";
  
- if (-s $express_results){
-   &process_express_bias( $express_results, $readset );
+ if (-s $salmon_results){
+   &process_salmon_bias( $salmon_results, $readset );
    return $original_bam;
  }
  
@@ -2741,10 +2719,10 @@ sub perform_correct_bias() {
   return $original_bam;
  }
 
-# if we are to allow express to do bias-correction then we need at least 200 genes with enough reads (fragments)
+# if we are to allow salmon to do bias-correction then we need at least 200 genes with enough reads (fragments)
  my $readset_metadata = &sqlite_get_readset_metadata($readset);
  my $readset_name     = $readset_metadata->{'alias'};
- my $express_dir      = $result_dir . "$readset_name.bias";
+ my $salmon_dir      = $result_dir . "$readset_name.bias";
 
 # The library size is determined by the total number of reads in the readset
 # this is due to the need to support searches that are not genome wide
@@ -2752,61 +2730,66 @@ sub perform_correct_bias() {
 # reads actually map to the genes... what to do then? implement -genomewide flag
  my $readset_size      = $readset_metadata->{'total_reads'};
 
-# todo get readset distribution from data if genomewide? nah: express does it automatically
- my $current_express_exec =
-   $express_exec . " --logtostderr --no-update-check -m $readset_separation ";
- $current_express_exec .= " --library-size $readset_size " if !$genomewide;
- $current_express_exec .= " $extra_express " if $extra_express;
- $current_express_exec .= ' -B 2 ' unless $nobatch_express;
+# todo get readset distribution from data if genomewide? nah: salmon does it automatically
+ my $current_salmon_exec =
+   $salmon_exec . " quant --sampleOut --fldMean $readset_separation --threads $threads ";
+ $current_salmon_exec .= " $extra_salmon " if $extra_salmon;
 
- $current_express_exec .= " $express_options_single "
-   if $express_options_single && $single_end_readsets{$readset};
+ $current_salmon_exec .= " $salmon_options_single "
+   if $salmon_options_single && $single_end_readsets{$readset};
 
- if ($genes_that_aligned < 200 || $readset_size < $express_min_bias ) {
-   warn "Read set size is less than $express_min_bias reads or 200 genes, express will not perform bias correction\n";
-   $current_express_exec .= ' --no-bias-correct ';
+ if ($readset_size < 5000000){
+	$current_salmon_exec .= " --mappingCacheMemoryLimit $readset_size --numAuxModelSamples " . int($readset_size - ($readset_size*0.1)) ." ";
+ }
+ if ($readset_size < 2000000){
+	$current_salmon_exec .= " --numBiasSamples " . int($readset_size - ($readset_size*0.1)) ." ";
+ }
+
+
+ if ($genes_that_aligned < 200 || $readset_size < $salmon_min_bias ) {
+   warn "Read set size is less than $salmon_min_bias reads or 200 genes, salmon will not perform bias correction\n";
+   $current_salmon_exec .= ' --noLengthCorrection ';
+  }elsif (!$is_quantseq){
+	$current_salmon_exec .= ' --seqBias --posBias --gcBias ';
+  }if ($is_quantseq){
+ 	$current_salmon_exec .= ' --noLengthCorrection --minAssignedFrags 3 ';
   }
 
- unless ( -s $express_results ) {
-  mkdir($express_dir) unless -d $express_dir;
+
+ unless ( -s $salmon_results ) {
+  mkdir($salmon_dir) unless -d $salmon_dir;
   if ($use_bwa) {
    &process_cmd("$samtools_exec sort -T $sort_tmp -o $namesorted_sam.bam -@ $samtools_threads -n -m $sam_sort_memory $original_bam  2>/dev/null"
    ) unless -s $namesorted_bam;
    if ($contextual_alignment) {
-    &process_cmd("$current_express_exec  -o $express_dir --output-align-samp $fasta_file $namesorted_bam > /dev/null 2> $express_results.log"
-    ) unless -s "$express_dir/results.xprs";
+    &process_cmd("$current_salmon_exec --output $salmon_dir --targets $fasta_file --alignments $namesorted_bam > /dev/null 2> $salmon_results.log"
+    ) unless -s "$salmon_dir/quant.sf";
     sleep(3);
-    &process_cmd("$samtools_exec sort -T $sort_tmp -o $express_bam_base.bam -@ $samtools_threads -m $sam_sort_memory $express_dir/hits.1.samp.bam  2>/dev/null"
-    ) unless -s "$express_bam_base.bam";
-    rename( "$express_dir/results.xprs", $express_results );
-    rename( "$express_dir/varcov.xprs",  $express_results . ".varcov" );
+    &process_cmd("$samtools_exec sort -T $sort_tmp -o $salmon_bam_base.bam -@ $samtools_threads -m $sam_sort_memory $salmon_dir/postSample.bam 2>/dev/null");
+    rename( "$salmon_dir/quant.sf", $salmon_results );
    }
    else {
 
     # not contextual.
-    open( EXPR, ">$express_results" ) || die($!);
-    print EXPR
-"bundle_id\ttarget_id\tlength\teff_length\ttot_counts\tuniq_counts\test_counts\teff_counts\tambig_distr_alpha\tambig_distr_beta\tfpkm\tfpkm_conf_low\tfpkm_conf_high\tsolvable\ttpm\n";
+    open( EXPR, ">$salmon_results" ) || die($!);
+    print EXPR "target_id\tlength\teff_length\teff_counts\ttpm\n";
     my $fasta_obj      = new Fasta_reader($fasta_file);
-    my $bundle_counter = 1;
     my $timer          = new Time::Progress;
     my $fasta_count    = `grep -c '^>'  < $fasta_file`;
     chomp($fasta_count);
     $timer->attr( min => 0, max => $fasta_count );
 
     while ( my $seq_obj = $fasta_obj->next() ) {
-     print $timer->report( "eta: %E min, %40b %p\r", $bundle_counter )
-       if ( $bundle_counter % 100 == 0 );
      my $id          = $seq_obj->get_accession();
      my $seq_md5hash = &sqlite_get_md5($id);
      my $expression_stats =
        &sqlite_get_expression_statistics( $seq_md5hash, $readset );
-     next if $expression_stats->{'express_fpkm'};
+     next if $expression_stats->{'salmon_tpm'};
      my $seq              = $seq_obj->get_sequence();
      my $len              = length($seq);
-     my $tmp_fasta_file   = $express_dir . '/' . $seq_md5hash . '.fasta.tmp';
-     my $tmp_sam_file     = $express_dir . '/' . $seq_md5hash . '.tmp';
-     my $tmp_express_file = "$tmp_sam_file.dir/results.xprs";
+     my $tmp_fasta_file   = $salmon_dir . '/' . $seq_md5hash . '.fasta.tmp';
+     my $tmp_sam_file     = $salmon_dir . '/' . $seq_md5hash . '.tmp';
+     my $tmp_salmon_file = "$tmp_sam_file.dir/quant.sf";
      open( FASTA, ">$tmp_fasta_file" ) || die($!);
      print FASTA ">$id\n$seq\n";
      close FASTA;
@@ -2816,7 +2799,7 @@ sub perform_correct_bias() {
      print SAM "\@HD\tVN:1.0\tSO:unsorted\n\@SQ\tSN:$id\tLN:$len\n";
      close SAM;
 
-     #sort for express
+     #sort for salmon
      &process_cmd("$samtools_exec view -F4 -o $tmp_sam_file $original_bam '$id'  |$sort_exec -T $sort_tmp -S $sort_memory_exec -k1  >>$tmp_sam_file  " );
      if ( -s $tmp_sam_file < 200 ) {
       warn "No alignments for $id. Skipping\n" if $debug;
@@ -2825,30 +2808,28 @@ sub perform_correct_bias() {
       unlink($tmp_sam_file)   unless $debug;
       next;
      }
-     &process_cmd("$current_express_exec  -o $tmp_sam_file.dir $tmp_fasta_file $tmp_sam_file >/dev/null  2> $express_results.log"
-     ) unless -s $tmp_express_file;
+     &process_cmd("$current_salmon_exec -o $tmp_sam_file.dir $tmp_fasta_file $tmp_sam_file >/dev/null  2> $salmon_results.log"
+     ) unless -s $tmp_salmon_file;
      sleep(3);
-     if ( -s $tmp_express_file < 200 ) {
-      warn "No post-express coverage for $id. Skipping\n"
+     if ( -s $tmp_salmon_file < 200 ) {
+      warn "No post-salmon coverage for $id. Skipping\n"
         if $debug;
-      print LOG "No post-express coverage for $id. Skipping\n";
+      print LOG "No post-salmon coverage for $id. Skipping\n";
       unlink($tmp_fasta_file)   unless $debug;
       unlink($tmp_sam_file)     unless $debug;
-      unlink($tmp_express_file) unless $debug;
+      unlink($tmp_salmon_file) unless $debug;
       next;
      }
-     open( IN, $tmp_express_file || die($!) );
+     open( IN, $tmp_salmon_file || die($!) );
      my $h = <IN>;
      while ( my $ln = <IN> ) {
-      $ln =~ s/^\d+/$bundle_counter/;
       print EXPR $ln;
      }
      close IN;
-     unlink($tmp_express_file)        unless $debug;
+     unlink($tmp_salmon_file)        unless $debug;
      unlink($tmp_sam_file)            unless $debug;
      unlink($tmp_fasta_file)          unless $debug;
      remove_tree("$tmp_sam_file.dir") unless $debug;
-     $bundle_counter++;
     }
     undef($fasta_obj);
     close EXPR;
@@ -2857,49 +2838,44 @@ sub perform_correct_bias() {
   else {
    if ($contextual_alignment) {
     if ( -s $namesorted_bam ) {
-     &process_cmd("$current_express_exec  -o $express_dir --output-align-samp $fasta_file $namesorted_bam >/dev/null  2> $express_results.log"
-     ) unless -s "$express_dir/results.xprs";
-     confess "Express failed to produce output\n"
-       unless -s "$express_dir/results.xprs";
-     sleep(30);
-     &process_cmd("$samtools_exec view -u $express_dir/hits.1.samp.bam | $samtools_exec sort -T $sort_tmp -o $express_bam_base.bam -@ $samtools_threads -m $sam_sort_memory - 2>/dev/null" ) unless -s "$express_bam_base.bam";
+     &process_cmd("$current_salmon_exec --output $salmon_dir --targets $fasta_file --alignments $namesorted_bam >/dev/null  2> $salmon_results.log"
+     ) unless -s "$salmon_dir/quant.sf";
+     confess "Salmon failed to produce output\n" unless -s "$salmon_dir/quant.sf";
+     sleep(3);
+     &process_cmd("$samtools_exec sort -T $sort_tmp -o $salmon_bam_base.bam -@ $samtools_threads -m $sam_sort_memory $salmon_dir/postSample.bam 2>/dev/null");
     }
     elsif ( -s $namesorted_sam ) {
-     &process_cmd("$current_express_exec  -o $express_dir --output-align-samp $fasta_file $namesorted_sam >/dev/null  2> $express_results.log"
-     ) unless -s "$express_dir/results.xprs";
-     confess "Express failed to produce output\n"
-       unless -s "$express_dir/results.xprs";
-     sleep(30);
-     my $express_hits_file = -s "$express_dir/hits.1.samp.bam" ? "$express_dir/hits.1.samp.bam" : "$express_dir/hits.1.samp.sam";
-     &process_cmd("$samtools_exec view -u $express_hits_file | $samtools_exec sort -T $sort_tmp -o $express_bam_base.bam -@ $samtools_threads -m $sam_sort_memory - 2>/dev/null") unless -s "$express_bam_base.bam";
+	#NB: this needs to include headers
+     &process_cmd("$current_salmon_exec --output $salmon_dir --targets $fasta_file --alignments $namesorted_sam >/dev/null  2> $salmon_results.log"
+     ) unless -s "$salmon_dir/quant.sf";
+     confess "Salmon failed to produce output\n"  unless -s "$salmon_dir/quant.sf";
+     sleep(3);
+     my $salmon_hits_file = "$salmon_dir/postSample.bam";
+     &process_cmd("$samtools_exec sort -T $sort_tmp -o $salmon_bam_base.bam -@ $samtools_threads -m $sam_sort_memory $salmon_dir/postSample.bam 2>/dev/null");
     }
-    rename( "$express_dir/results.xprs", $express_results );
-
-    # rename( "$express_dir/varcov.xprs", $express_results.".varcov" );
+    rename( "$salmon_dir/quant.sf", $salmon_results );
    }
    else {
     my $timer       = new Time::Progress;
     my $fasta_count = `grep -c '^>' < $fasta_file`;
     chomp($fasta_count);
     $timer->attr( min => 0, max => $fasta_count );
-    open( EXPR, ">$express_results" ) || die($!);
-    print EXPR "bundle_id\ttarget_id\tlength\teff_length\ttot_counts\tuniq_counts\test_counts\teff_counts\tambig_distr_alpha\tambig_distr_beta\tfpkm\tfpkm_conf_low\tfpkm_conf_high\tsolvable\ttpm\n";
+    open( EXPR, ">$salmon_results" ) || die($!);
+    print EXPR "target_id\tlength\teff_length\teff_counts\ttpm\n";
+#    print EXPR "bundle_id\ttarget_id\tlength\teff_length\ttot_counts\tuniq_counts\test_counts\teff_counts\tambig_distr_alpha\tambig_distr_beta\tfpkm\tfpkm_conf_low\tfpkm_conf_high\tsolvable\ttpm\n";
     my $fasta_obj      = new Fasta_reader($fasta_file);
-    my $bundle_counter = 1;
 
     while ( my $seq_obj = $fasta_obj->next() ) {
-     print $timer->report( "eta: %E min, %40b %p\r", $bundle_counter )
-       if ( $bundle_counter % 100 == 0 );
      my $id          = $seq_obj->get_accession();
      my $seq_md5hash = &sqlite_get_md5($id);
      my $expression_stats =
        &sqlite_get_expression_statistics( $seq_md5hash, $readset );
-     next if $expression_stats->{'express_fpkm'};
+     next if $expression_stats->{'salmon_tpm'};
      my $seq              = $seq_obj->get_sequence();
      my $len              = length($seq);
-     my $tmp_fasta_file   = $express_dir . '/' . $seq_md5hash . '.fasta.tmp';
-     my $tmp_sam_file     = $express_dir . '/' . $seq_md5hash . '.tmp';
-     my $tmp_express_file = "$tmp_sam_file.dir/results.xprs";
+     my $tmp_fasta_file   = $salmon_dir . '/' . $seq_md5hash . '.fasta.tmp';
+     my $tmp_sam_file     = $salmon_dir . '/' . $seq_md5hash . '.tmp';
+     my $tmp_salmon_file = "$tmp_sam_file.dir/quant.sf";
      open( FASTA, ">$tmp_fasta_file" ) || die($!);
      print FASTA ">$id\n$seq\n";
      close FASTA;
@@ -2909,10 +2885,8 @@ sub perform_correct_bias() {
      print SAM "\@HD\tVN:1.0\tSO:unsorted\n\@SQ\tSN:$id\tLN:$len\n";
      close SAM;
 
-     #sort for express
-     &process_cmd(
-       "$samtools_exec view -F4 $original_bam '$id' |$sort_exec -T $sort_tmp -S $sort_memory_exec -k1  >>$tmp_sam_file "
-     );
+     #sort for salmon
+     &process_cmd("$samtools_exec view -F4 $original_bam '$id' |$sort_exec -T $sort_tmp -S $sort_memory_exec -k1  >>$tmp_sam_file "     );
      if ( !-s $tmp_sam_file || -s $tmp_sam_file < 200 ) {
       warn "No alignments for $id. Skipping\n" if $debug;
       print LOG "No alignments for $id. Skipping\n";
@@ -2920,39 +2894,36 @@ sub perform_correct_bias() {
       unlink($tmp_sam_file)   unless $debug;
       next;
      }
-     &process_cmd(
-"$current_express_exec  -o $tmp_sam_file.dir --output-align-samp $tmp_fasta_file $tmp_sam_file >/dev/null  2> $express_results.log"
-     ) unless -s $tmp_express_file;
+     &process_cmd("$current_salmon_exec -o $tmp_sam_file.dir --output-align-samp $tmp_fasta_file $tmp_sam_file >/dev/null  2> $salmon_results.log"
+     ) unless -s $tmp_salmon_file;
      sleep(3);
-     if ( !-s $tmp_express_file || -s $tmp_express_file < 200 ) {
-      warn "No post-express coverage for $id. Skipping\n"
+     if ( !-s $tmp_salmon_file || -s $tmp_salmon_file < 200 ) {
+      warn "No post-salmon coverage for $id. Skipping\n"
         if $debug;
-      print LOG "No post-express coverage for $id. Skipping\n";
+      print LOG "No post-salmon coverage for $id. Skipping\n";
       unlink($tmp_fasta_file)          unless $debug;
       unlink($tmp_sam_file)            unless $debug;
-      unlink($tmp_express_file)        unless $debug;
+      unlink($tmp_salmon_file)        unless $debug;
       remove_tree("$tmp_sam_file.dir") unless $debug;
       next;
      }
-     open( IN, $tmp_express_file ) || die($!);
+     open( IN, $tmp_salmon_file ) || die($!);
      my $h = <IN>;
      while ( my $ln = <IN> ) {
-      $ln =~ s/^\d+/$bundle_counter/;
       print EXPR $ln;
      }
      close IN;
-     unlink($tmp_express_file)        unless $debug;
+     unlink($tmp_salmon_file)        unless $debug;
      unlink($tmp_sam_file)            unless $debug;
      unlink($tmp_fasta_file)          unless $debug;
      remove_tree("$tmp_sam_file.dir") unless $debug;
-     $bundle_counter++;
     }
     undef($fasta_obj);
     close EXPR;
    }
   }
   unlink($namesorted_sam) unless $debug;
-  &remove_tree($express_dir) unless $debug;
+  &remove_tree($salmon_dir) unless $debug;
   if ($contextual_alignment) {
 
    unlink( $original_bam . '.orig.bai' ) if -s $original_bam . ".bai";
@@ -2960,18 +2931,20 @@ sub perform_correct_bias() {
    rename( $original_bam,          $original_bam . '.orig' );
    rename( $original_bam . ".bai", $original_bam . '.orig.bai' );
    chdir($result_dir);
-   link( fileparse($express_bam), fileparse($original_bam) );
+   link( fileparse($salmon_bam), fileparse($original_bam) );
    &process_cmd( "$samtools_exec index " . fileparse($original_bam) );
    chdir($cwd);
   }
  }
- &process_express_bias( $express_results, $readset );
+ &process_salmon_bias( $salmon_results, $readset );
  return $original_bam;
 }
 
 sub perform_stats() {
  if ( !$no_graphs ) {
-  print "\n" . &mytime() . "Stats n graphs: Calculating per gene stats\n";
+  print "\n" . &mytime() . "Stats n graphs: Calculating per gene stats";
+  print " ($uid.raw_stats.tsv)" if $debug;
+  print "\n";
   print LOG &mytime() . "Calculating per gene stats\n";
  }
  else {
@@ -2980,14 +2953,11 @@ sub perform_stats() {
  }
  open( STATS,       ">$result_dir/$uid.raw_stats.tsv" )   || die($!);
  open( STATS_RATIO, ">$result_dir/$uid.ratio.stats.tsv" ) || die($!);
- print STATS_RATIO
-   "Checksum\tGene alias\tReadset1\tReadset2\tRaw RPKM\tKANGADE";
- print STATS_RATIO
-   "\tExpress-corrected FPKM\tExpress-corrected counts\tExpress-corrected TPM"
+ print STATS_RATIO   "Checksum\tGene alias\tReadset1\tReadset2\tRaw RPKM\tKANGADE";
+ print STATS_RATIO   "\tSalmon-corrected TPM\tsalmon-corrected counts"
    if $perform_bias_correction;
  print STATS_RATIO "\n";
- print STATS
-"Checksum\tReadset\tGene alias\tRaw RPKM\tMean\tstd. dev\tMedian\tUpper limit\tTotal hits\tGene coverage\n";
+ print STATS "Checksum\tReadset\tGene alias\tRaw RPKM\tMean\tstd. dev\tMedian\tUpper limit\tTotal hits\tGene coverage\n";
  my $timer_counter = int(0);
  my $timer         = new Time::Progress;
  $timer->attr( min => 0, max => scalar( keys %user_alias ) );
@@ -3187,17 +3157,13 @@ sub make_coverage_graph($$$) {
     $expression_statistics_ref->{'rpkm'}
     ? int( $expression_statistics_ref->{'rpkm'} )
     : int(0);
-  my $express_fpkm =
-      $expression_statistics_ref->{'express_fpkm'}
-    ? $expression_statistics_ref->{'express_fpkm'}
-    : int(0);
-  my $express_tpm =
-      $expression_statistics_ref->{'express_tpm'}
-    ? $expression_statistics_ref->{'express_tpm'}
+  my $salmon_tpm =
+      $expression_statistics_ref->{'salmon_tpm'}
+    ? $expression_statistics_ref->{'salmon_tpm'}
     : int(0);
   my $effective_counts =
-      $expression_statistics_ref->{'express_eff_counts'}
-    ? $expression_statistics_ref->{'express_eff_counts'}
+      $expression_statistics_ref->{'salmon_eff_counts'}
+    ? $expression_statistics_ref->{'salmon_eff_counts'}
     : int(0);
   my $gene_length_coverage_sd = $expression_statistics_ref->{'gene_length_coverage_sd'};
 
@@ -3210,8 +3176,8 @@ sub make_coverage_graph($$$) {
     if $expression_statistics_ref->{'gene_length_coverage_mean'} && $pivot < 0;
   my $stats_description = " RPKM: $rpkm";
   $stats_description .= " pivot: $pivot" if $pivot;
-  $stats_description .= " Effective FPKM: $express_fpkm Eff.TPM: $express_tpm Eff.counts: $effective_counts "
-    if $expression_statistics_ref->{'express_fpkm'};
+  $stats_description .= " Eff.TPM: $salmon_tpm Eff.counts: $effective_counts "
+    if $expression_statistics_ref->{'salmon_tpm'};
   my $gene_length_coverage_max = $expression_statistics_ref->{'gene_length_coverage_max'};
   
 
@@ -3280,8 +3246,7 @@ sub make_coverage_graph($$$) {
    warn "Something really bad happened: maybe the statistics were not properly processed...\n";
   }
   else {
-   warn "No coverage of $seq_id ($seq_md5hash) vs $readset !\n"
-     if $debug;
+   warn "No coverage of $seq_id ($seq_md5hash) vs $readset !\n"     if $debug;
    $graph->add_track(
           xyplot       => $readset_feature,                               #work!
           -description => 1,
@@ -3356,20 +3321,16 @@ sub process_main_stats($) {
   $gene_length_coverage_stat->add_data( \@gene_length_coverages );
  
  my $gene_length_coverage_median = $gene_length_coverage_stat->median() ? $gene_length_coverage_stat->median() : int(0);
-  my $gene_length_coverage_sd =
-    $gene_length_coverage_stat->standard_deviation()
+  my $gene_length_coverage_sd =    $gene_length_coverage_stat->standard_deviation()
     ? sprintf( "%.2f", $gene_length_coverage_stat->standard_deviation() )
     : int(0);
-  my $gene_length_coverage_mean =
-    $gene_length_coverage_stat->mean() ? sprintf( "%.2f", $gene_length_coverage_stat->mean() ) : int(0);
+  my $gene_length_coverage_mean =    $gene_length_coverage_stat->mean() ? sprintf( "%.2f", $gene_length_coverage_stat->mean() ) : int(0);
   my $gene_length_coverage_max = $gene_length_coverage_stat->max() ? $gene_length_coverage_stat->max() : int(0);
-  my $aligned_reads_per_base =
-    $total_aligned_reads
+  my $aligned_reads_per_base =    $total_aligned_reads
     ? sprintf( "%.2f", ( $total_aligned_reads / $seq_size ) )
     : int(0);
   $readsets_covered++;
-  my $gene_length_coverage =
-    sprintf( "%.2f", ( ( $seq_size - $no_bp_covered ) / $seq_size ) );
+  my $gene_length_coverage =    sprintf( "%.2f", ( ( $seq_size - $no_bp_covered ) / $seq_size ) );
 
   &sqlite_add_main_expression_statistics(
                          $seq_md5hash, $readsets[$i], $gene_length_coverage_mean, $no_bp_covered,
@@ -3382,6 +3343,7 @@ sub process_main_stats($) {
   if ( !$only_alignments ) {
     $stats_ref =
      &sqlite_get_expression_statistics( $seq_md5hash, $readsets[$i] );
+
    $expression_coverage_stats_hash{$seq_md5hash}{ $readsets[$i] } = {
                                           'gene_length_coverage' => $gene_length_coverage,
                                           'gene_length_coverage_mean' => $gene_length_coverage_mean,
@@ -3477,8 +3439,7 @@ sub process_expression_level() {
  open( OUT,           ">$expression_level_tsv" )              || die($!);
  open( COUNTS_MATRIX, ">$counts_expression_level_matrix" )    || die($!);
  open( EFFECT_MATRIX, ">$effective_expression_level_matrix" ) || die($!);
- print OUT
-"Checksum\tGene alias\tReadset\tRaw_Counts\tRPKM\tExpress_FPKM\tExpress_TPM\tExpress_eff.counts\tKANGADE_counts\n";
+ print OUT "Checksum\tGene alias\tReadset\tRaw_Counts\tRPKM\tsalmon_TPM\tsalmon_eff.counts\tKANGADE_counts\n";
  my $count_matrix_print = "transcript\t";
 
  for ( my $i = 0 ; $i < scalar(@readsets) ; $i++ ) {
@@ -3498,29 +3459,24 @@ sub process_expression_level() {
   for ( my $i = 0 ; $i < scalar(@readsets) ; $i++ ) {
    my $readset_metadata_C = &sqlite_get_readset_metadata( $readsets[$i] );
    my $readset_name_C     = $readset_metadata_C->{'alias'};
-   my $stats_ref_C =
-     &sqlite_get_expression_statistics( $seq_md5hash, $readsets[$i] );
+   my $stats_ref_C =  &sqlite_get_expression_statistics( $seq_md5hash, $readsets[$i] );
+#die Dumper  $stats_ref_C;
    $stats_ref_C->{'total_aligned_reads'}   = int(0) if !$stats_ref_C->{'total_aligned_reads'};
-   $stats_ref_C->{'express_fpkm'} = int(0) if !$stats_ref_C->{'express_fpkm'};
-   $stats_ref_C->{'express_eff_counts'} = int(0)
-     if !$stats_ref_C->{'express_eff_counts'};
-   $stats_ref_C->{'express_tpm'} = int(0)
-     if !$stats_ref_C->{'express_tpm'};
+   $stats_ref_C->{'salmon_eff_counts'} = int(0) if !$stats_ref_C->{'salmon_eff_counts'};
+   $stats_ref_C->{'salmon_tpm'} = int(0) if !$stats_ref_C->{'salmon_tpm'};
    $stats_ref_C->{'rpkm'} = int(0) if !$stats_ref_C->{'rpkm'};
-   $stats_ref_C->{'kangade_counts'} = int(0)
-     if !$stats_ref_C->{'kangade_counts'};
+   $stats_ref_C->{'kangade_counts'} = int(0) if !$stats_ref_C->{'kangade_counts'};
 
-   $count_matrix_print .= $stats_ref_C->{'express_eff_counts'} . "\t";
+   $count_matrix_print .= $stats_ref_C->{'salmon_eff_counts'} . "\t";
    $effective_matrix_print .=
-     sprintf( "%.2f", $stats_ref_C->{'express_tpm'} ) . "\t";
+     sprintf( "%.2f", $stats_ref_C->{'salmon_tpm'} ) . "\t";
    print OUT $seq_md5hash . "\t" 
      . $seq_id . "\t"
      . $readset_name_C . "\t"
      . $stats_ref_C->{'total_aligned_reads'} . "\t"
      . $stats_ref_C->{'rpkm'} . "\t"
-     . $stats_ref_C->{'express_fpkm'} . "\t"
-     . $stats_ref_C->{'express_tpm'} . "\t"
-     . $stats_ref_C->{'express_eff_counts'} . "\t"
+     . $stats_ref_C->{'salmon_tpm'} . "\t"
+     . $stats_ref_C->{'salmon_eff_counts'} . "\t"
      . $stats_ref_C->{'kangade_counts'} . "\n";
 
    # now parse each pair of readsets
@@ -3533,15 +3489,10 @@ sub process_expression_level() {
      my $stats_ref_E =
        &sqlite_get_expression_statistics( $seq_md5hash, $readsets[$k] );
      $stats_ref_E->{'total_aligned_reads'} = int(0) if !$stats_ref_E->{'total_aligned_reads'};
-     $stats_ref_E->{'express_eff_counts'} = int(0)
-       if !$stats_ref_E->{'express_eff_counts'};
-     $stats_ref_E->{'express_fpkm'} = int(0)
-       if !$stats_ref_E->{'express_fpkm'};
-     $stats_ref_E->{'express_tpm'} = int(0)
-       if !$stats_ref_E->{'express_tpm'};
+     $stats_ref_E->{'salmon_eff_counts'} = int(0)   if !$stats_ref_E->{'salmon_eff_counts'};
+     $stats_ref_E->{'salmon_tpm'} = int(0)  if !$stats_ref_E->{'salmon_tpm'};
      $stats_ref_E->{'rpkm'} = int(0) if !$stats_ref_E->{'rpkm'};
-     $stats_ref_E->{'kangade_counts'} = int(0)
-       if !$stats_ref_E->{'kangade_counts'};
+     $stats_ref_E->{'kangade_counts'} = int(0)  if !$stats_ref_E->{'kangade_counts'};
      my $raw_rpkm_ratio =
        !$stats_ref_E->{'rpkm'} || $stats_ref_E->{'rpkm'} == 0
        ? 'Inf'
@@ -3561,28 +3512,21 @@ sub process_expression_level() {
 
      if ($perform_bias_correction) {
 
-      my $express_tpm_ratio =
-        !$stats_ref_E->{'express_tpm'} || $stats_ref_E->{'express_tpm'} == 0
+      my $salmon_tpm_ratio =
+        !$stats_ref_E->{'salmon_tpm'} || $stats_ref_E->{'salmon_tpm'} == 0
         ? 'Inf'
         : sprintf( "%.2f",
-                   $stats_ref_C->{'express_tpm'} /
-                     $stats_ref_E->{'express_tpm'} );
+                   $stats_ref_C->{'salmon_tpm'} /
+                     $stats_ref_E->{'salmon_tpm'} );
 
-      my $fpkm_ratio =
-        !$stats_ref_E->{'express_fpkm'} || $stats_ref_E->{'express_fpkm'} == 0
-        ? 'Inf'
-        : sprintf( "%.2f",
-                   $stats_ref_C->{'express_fpkm'} /
-                     $stats_ref_E->{'express_fpkm'} );
       my $eff_counts_ratio =
-          !$stats_ref_E->{'express_eff_counts'}
-        || $stats_ref_E->{'express_eff_counts'} == 0
+          !$stats_ref_E->{'salmon_eff_counts'}
+        || $stats_ref_E->{'salmon_eff_counts'} == 0
         ? 'Inf'
         : sprintf( "%.2f",
-                   $stats_ref_C->{'express_eff_counts'} /
-                     $stats_ref_E->{'express_eff_counts'} );
-      $add_express_fold_change->execute( $fpkm_ratio, $eff_counts_ratio,
-                $express_tpm_ratio, $seq_md5hash, $readsets[$i], $readsets[$k] )
+                   $stats_ref_C->{'salmon_eff_counts'} /
+                     $stats_ref_E->{'salmon_eff_counts'} );
+      $add_salmon_fold_change->execute( $eff_counts_ratio, $salmon_tpm_ratio, $seq_md5hash, $readsets[$i], $readsets[$k] )
         unless $contextual_alignment;
       print STATS_RATIO $seq_md5hash . "\t" 
         . $seq_id . "\t"
@@ -3590,9 +3534,8 @@ sub process_expression_level() {
         . $readset_name_E . "\t"
         . $raw_rpkm_ratio . "\t"
         . $kangade_ratio . "\t"
-        . $fpkm_ratio . "\t"
-        . $eff_counts_ratio . "\t"
-        . $express_tpm_ratio . "\t" . "\n";
+        . $salmon_tpm_ratio . "\t"
+        . $eff_counts_ratio . "\t" . "\n";
      }
      else {
       print STATS_RATIO $seq_md5hash . "\t" 
@@ -3702,6 +3645,7 @@ sub process_completion() {
 
 # N.B. Remember: R/FPKM is for looking at differences between libraries and mean/gene_length_coverage_median for looking at differences within a library.
 # RPKM is appropriate for Single-End libraries and FPKM for Paired-End libraries
+# Community has now rallied behind TPM which is what we're using here
  my $elapsed = $total_timer->report("%L");
  print "\nCompleted in $elapsed!\n";
  print LOG "\nCompleted in $elapsed!\n";
@@ -3732,11 +3676,14 @@ sub process_completion() {
 }
 
 sub perform_TMM_normalization_edgeR() {
- print "\n" . &mytime
-   . "Performing trimmed mean of fold-change normalization\n";
  my $matrix_file = shift;
  my $matrix_base = fileparse($matrix_file);
  my $TMM_file    = $edgeR_dir . 'TMM_info.txt';
+
+ print "\n" . &mytime
+   . "Performing trimmed mean of fold-change normalization";
+ print " using $matrix_file" if $debug;
+ print "\n";
 
 # AP: accounting for groups (column 2 [1] in target.files and TMM_info.txt files)
  my ($effective_TMM_matrix_file);
@@ -3783,8 +3730,7 @@ sub perform_TMM_normalization_edgeR() {
  $effective_TMM_matrix_file =
    &write_normalized_effective_file( $matrix_file, $TMM_file );
 
- return ( $effective_TMM_matrix_file . '.fpkm',
-          $effective_TMM_matrix_file . '.tpm' );
+ return ( $effective_TMM_matrix_file . '.tpm' );
 }
 
 sub perform_edgeR_pairwise() {
@@ -4299,7 +4245,7 @@ sub prepare_for_dge() {
  my $seq_md5sum        = shift;
  my $dispersion_method = shift;
 
- # get the table of counts, either via express or from survey.
+ # get the table of counts, either via salmon or from survey.
 
 #deseq script from Robles/Alexie
 #  my $rscript = '
@@ -4414,7 +4360,7 @@ sub run_edgeR {
 sub write_normalized_effective_file {
 
 #init. from b.haas
-# this will take the matrix file, from e.g. express or raw, and convert to FPKM by
+# this will take the matrix file, from e.g. salmon or raw, and convert to FPKM by
 # applying the TMM normalization previously done with edgeR.
  my ( $matrix_file, $tmm_info_file ) = @_;
  my $normalized_effective_file =
@@ -4433,16 +4379,14 @@ sub write_normalized_effective_file {
   $eff_lib_sizes{ $data[2] } = $data[5];
   $norm_factors{ $data[2] }  = $data[4];    # not used
  }
- close IN;
- open( OUT1, ">$normalized_effective_file.fpkm" ) || die($!);
- open( OUT2, ">$normalized_effective_file.tpm" )  || die($!);
- open( IN,   $matrix_file )                       || die($!);
+ close IN; 
+ open( OUT2, ">$normalized_effective_file.tpm" ) || die($!);
+ open( IN, $matrix_file ) || die($!);
  $header = <IN>;
- print OUT1 $header;
  print OUT2 $header;
  chomp $header;
- my @readsets_from_matrix =
-   split( "\t", $header );    # first (0) key is just '#transcript'
+  my @readsets_from_matrix = split( "\t", $header ); 
+   # first (0) key is just '#transcript'
 
  # get total transcript abundance first
  while ( my $ln = <IN> ) {
@@ -4501,23 +4445,19 @@ sub write_normalized_effective_file {
    my $frag_count      = $data[$i];
    my $norm_frag_count = sprintf( "%.2f",$norm_factor * $frag_count);
 
-   my $fpkm = $frag_count / ( $seq_len / 1e3 ) / ( $eff_lib_size / 1e6 );
-   $fpkm = sprintf( "%.2f", $fpkm );
+#   my $fpkm = $frag_count / ( $seq_len / 1e3 ) / ( $eff_lib_size / 1e6 );
+#   $fpkm = sprintf( "%.2f", $fpkm );
 
    my $transcript_abundance = ( $frag_count * $readlength_median ) / $seq_len;
    my $tpm                  = ( $transcript_abundance * 1e6 ) / $tpm_readsets{$readset_name}{'sum_tpm'};
    $tpm = sprintf( "%.2f",$tpm);
    
-   $print1 .= "\t$fpkm";
    $print2 .= "\t$tpm";
    $TMM_hash{$gene}{$readset_name}{'norm_frag_count'} = $norm_frag_count;
-   $TMM_hash{$gene}{$readset_name}{'FPKM'}            = $fpkm;
    $TMM_hash{$gene}{$readset_name}{'TPM'}             = $tpm;
   }
-  print OUT1 $print1 . "\n";
   print OUT2 $print2 . "\n";
  }
- close OUT1;
  close OUT2;
  unless ( $normalized_effective_file . '.tpm'
           && -s $normalized_effective_file . '.tpm' )
@@ -4539,14 +4479,13 @@ sub write_normalized_effective_file {
   open( STATSOUT, ">$result_dir/$uid.expression_levels.stats.tsv.t" )
     || die($!);
   chomp($header_S);
-  print STATSOUT $header_S . "\tTMM_Normalized.count\tTMM.FPKM\tTMM.TPM\n";
+  print STATSOUT $header_S . "\tTMM_Normalized.count\tTMM.TPM\n";
   while ( my $ln = <STATSIN> ) {
    chomp($ln);
    my @data = split( "\t", $ln );
    next unless $data[2];
    print STATSOUT $ln . "\t"
      . $TMM_hash{ $data[0] }{ $data[2] }{'norm_frag_count'} . "\t"
-     . $TMM_hash{ $data[0] }{ $data[2] }{'FPKM'} . "\t"
      . $TMM_hash{ $data[0] }{ $data[2] }{'TPM'} . "\n";
   }
   close STATSIN;
@@ -4578,7 +4517,7 @@ print_statistics_normalized('$result_dir/$uid.expression_levels.stats.tsv')
  if ( scalar(@headers) < 11 ) {
   open( STATSOUT, ">$result_dir/$uid.ratio.stats.tsv.t" ) || die($!);
   chomp($headerR);
-  print STATSOUT $headerR . "\tTMM_Normalized.count\tTMM.FPKM\tTMM.TPM\n";
+  print STATSOUT $headerR . "\tTMM_Normalized.count\tTMM.TPM\n";
   while ( my $ln = <STATSIN> ) {
    chomp($ln);
    my @data = split( "\t", $ln );
@@ -4596,17 +4535,6 @@ print_statistics_normalized('$result_dir/$uid.expression_levels.stats.tsv')
      )
      : int(0);
 
-   my $fpkm_ratio =
-     (    $TMM_hash{ $data[0] }{ $data[2] }{'FPKM'} > 0
-       && $TMM_hash{ $data[0] }{ $data[3] }{'FPKM'} > 0 )
-     ? sprintf(
-                "%.2f",
-                (
-                  $TMM_hash{ $data[0] }{ $data[2] }{'FPKM'} /
-                    $TMM_hash{ $data[0] }{ $data[3] }{'FPKM'}
-                )
-     )
-     : int(0);
    my $tpm_ratio =
      (    $TMM_hash{ $data[0] }{ $data[2] }{'TPM'} > 0
        && $TMM_hash{ $data[0] }{ $data[3] }{'TPM'} > 0 )
@@ -4618,7 +4546,7 @@ print_statistics_normalized('$result_dir/$uid.expression_levels.stats.tsv')
                 )
      )
      : int(0);
-   print STATSOUT $ln . "\t$norm_count_ratio\t$fpkm_ratio\t$tpm_ratio\n";
+   print STATSOUT $ln . "\t$norm_count_ratio\t$tpm_ratio\n";
   }
   close STATSIN;
   close STATSOUT;
@@ -4855,8 +4783,7 @@ sub get_figure_legend_effective_plots() {
  $file =~ s/.pdf$//;
  $file .= "_legend.txt";
 
- my $legend =
-'Differential expression as estimated by DEW. For each gene in the assembly an expression value was derived after normalizing effective counts (from eXpress) for library size and the Trimmed Mean of M-values (TMM) and converting it to a FPKM value. The boxplots in the background of each gene plot show the distribution of expression values for each library: The 1st & 3rd quartile and median of these expression value for the entire library. The bars of each boxplot (whiskers) extend up to 1.5 the length of the box (up to the max/min outlier point) while the grey points denote outliers. Then for each gene, a red dot denotes the actual expression value for each library. If the red dot intercepts the Y axis (i.e. near 0), then the gene deemed as not expressed.';
+ my $legend = 'Differential expression as estimated by DEW. For each gene in the assembly an expression value was derived after normalizing effective counts (from salmon) for library size and the Trimmed Mean of M-values (TMM) and converting it to a TPM value. The boxplots in the background of each gene plot show the distribution of expression values for each library: The 1st & 3rd quartile and median of these expression value for the entire library. The bars of each boxplot (whiskers) extend up to 1.5 the length of the box (up to the max/min outlier point) while the grey points denote outliers. Then for each gene, a red dot denotes the actual expression value for each library. If the red dot intercepts the Y axis (i.e. near 0), then the gene deemed as not expressed.';
 
  open( OUT, ">$file" ) || die;
  print OUT &wrap_text($legend);
