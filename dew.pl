@@ -380,8 +380,10 @@ if ($sort_version=~/^sort \(GNU coreutils\) (\d+)/){
 }
 mkdir($sort_tmp) if !-d $sort_tmp;
 
-# parallelise alignments; each alignment uses 2 threads
-my $alignment_thread_helper = new Thread_helper(int($threads/2));
+# parallelise alignments; each alignment uses 4 threads
+my $alignment_threads = 4;
+my $alignment_helper_threads = int($threads/$alignment_threads) > 0 ? int($threads/$alignment_threads) : 1;
+my $alignment_thread_helper = new Thread_helper($alignment_helper_threads);
 
 my $samtools_threads = $threads > 5 ? 5 : $threads;
 my $sam_sort_memory = int($sort_memory / $samtools_threads); 
@@ -1270,7 +1272,7 @@ sub perform_checks_preliminary() {
   foreach my $op1 (@opt1) {
    my @opt2 = split( ':', $op1 );
    next unless $opt2[1];
-   if ($opt2[1] eq 'libType'){$is_lib_provided++;}
+   if ($opt2[1] =~/libType/){$is_lib_provided++;}
    $extra_salmon .= ' --' . $opt2[1] if $opt2[0] && $opt2[0] eq 'salmon';
   }
   print "All data: Applying extra salmon options: $extra_salmon\n";
@@ -1280,7 +1282,7 @@ sub perform_checks_preliminary() {
   my @opt1 = split( ';', $options_single );
   foreach my $op1 (@opt1) {
    my @opt2 = split( ':', $op1 );
-   if ($opt2[1] eq 'libType'){$is_lib_provided++;}
+   if ($opt2[1] =~/libType/){$is_lib_provided++;}
    $salmon_options_single .= ' --' . $opt2[1] if $opt2[0] eq 'salmon';
   }
   print "SE data: Applying extra salmon options: $salmon_options_single\n";
@@ -1708,6 +1710,7 @@ sub starts_alignments() {
   for ( my $i = 0 ; $i < (@readsets) ; $i++ ) {
 
    my $readset          = $readsets[$i];
+   next unless $readset;
    my $readset2 = $readsets2[$i] if $readsets2[$i];
    my $readset_basename = fileparse($readset);
    my $alnbase          = $baseout . '_vs_' . $readset_basename;
@@ -1724,8 +1727,13 @@ sub starts_alignments() {
    }else{
     ($alignment_bam_file, $rpkm_hashref, $eff_counts_hashref ) = &perform_correct_bias( $alignment_bam_file, $file_to_align, $readset, $alignment_bam_file . '.namesorted' )
       if ($perform_bias_correction);
-    &process_alignments( $alignment_bam_file, $readset, $readset2 ) if $readset2;
-    &process_alignments( $alignment_bam_file, $readset ) if !$readset2;
+    if (-s $alignment_bam_file){
+      &process_alignments( $alignment_bam_file, $readset, $readset2 ) if $readset2;
+      &process_alignments( $alignment_bam_file, $readset ) if !$readset2;
+    }else{
+	warn "Alignment $alignment_bam_file did not complete. Will skip.\n";
+	delete($readsets[$i]);
+    }
    }
 
  } 
@@ -1737,6 +1745,7 @@ sub starts_alignments() {
      . " readsets                                         \r";
 
    my $readset          = $readsets[$i];
+   next unless $readset;
    my $readset2 = $readsets2[$i] if $readsets2[$i];
    my $readset_basename = fileparse($readset);
    my $alnbase          = $baseout . '_vs_' . $readset_basename;
@@ -1809,6 +1818,7 @@ sub starts_alignments() {
    for ( my $i = 0 ; $i < (@readsets) ; $i++ ) {
 
    my $readset          = $readsets[$i];
+   next unless $readset;
    my $readset2 = $readsets2[$i] if $readsets2[$i];
    my $readset_basename = fileparse($readset);
    my $alnbase          = $baseout . '_vs_' . $readset_basename;
@@ -1927,6 +1937,8 @@ sub perform_alignments() {
  my $baseout = shift;
  my $bam = shift;
  my $sam = shift;
+
+ confess "File $readset not found!" if (!-s $readset);
 
  print "\n" . &mytime
    . "Aligning: Performing alignments of $file_to_align vs $readset_basename\n";
@@ -2412,18 +2424,18 @@ sub align_bowtie2() {
   if ( $read_format eq 'fastq' ) {
    my $qformat = &check_fastq_format($readset);
    if ($qformat eq 'fasta'){
-   	&process_cmd("$bowtie2_exec --reorder -a -f --threads 2 --rdg 6,5 --rfg 6,5 --score-min L,-0.6,-0.4 --no-discordant -X $fragment_max_length --no-mixed --no-unal -x $file_to_align -1 $readset -2 $readset2 -S $sam 2> $baseout.log"   ) unless -s $sam;
+   	&process_cmd("$bowtie2_exec --reorder -a -f --threads $alignment_threads --rdg 6,5 --rfg 6,5 --score-min L,-0.6,-0.4 --no-discordant -X $fragment_max_length --no-mixed --no-unal -x $file_to_align -1 $readset -2 $readset2 -S $sam 2> $baseout.log"   ) unless -s $sam;
    }else{
 	$qformat = '--'.$qformat;
       # NB --all is -a but --all is a bug
-   	&process_cmd("$bowtie2_exec --reorder $qformat -a -q --threads 2 --rdg 6,5 --rfg 6,5 --score-min L,-0.6,-0.4 --no-discordant -X $fragment_max_length --no-mixed --no-unal -x $file_to_align -1 $readset -2 $readset2 -S $sam 2> $baseout.log"   ) unless -s $sam;
+   	&process_cmd("$bowtie2_exec --reorder $qformat -a -q --threads $alignment_threads --rdg 6,5 --rfg 6,5 --score-min L,-0.6,-0.4 --no-discordant -X $fragment_max_length --no-mixed --no-unal -x $file_to_align -1 $readset -2 $readset2 -S $sam 2> $baseout.log"   ) unless -s $sam;
    }
   }
   else {
    confess "Sorry, paired end Bowtie does not work with BAM files\n";
 
-#&process_cmd("$bamtools_exec convert -in $readset -format fastq | $bowtie2_exec --end-to-end --fast -qap $threads -x $file_to_align -U - -S $sam");
-#&process_cmd("$bamtools_exec convert -in $readset2 -format fastq | $bowtie2_exec --end-to-end --fast -qap $threads -x $file_to_align -U - >> $sam");
+#&process_cmd("$bamtools_exec convert -in $readset -format fastq | $bowtie2_exec --end-to-end --fast -qap $alignment_threads -x $file_to_align -U - -S $sam");
+#&process_cmd("$bamtools_exec convert -in $readset2 -format fastq | $bowtie2_exec --end-to-end --fast -qap $alignment_threads -x $file_to_align -U - >> $sam");
   }
  }
  else {
@@ -2432,14 +2444,14 @@ sub align_bowtie2() {
   if ( $read_format eq 'fastq' ) {
    my $qformat = &check_fastq_format($readset);
    if ($qformat eq 'fasta'){
-	&process_cmd("$bowtie2_exec --reorder -a -f --rdg 6,5 --rfg 6,5 --score-min L,-0.6,-0.4 --no-unal --threads $threads -x $file_to_align -U $readset -S $sam 2> $baseout.log >/dev/null" ) unless -s $sam;
+	&process_cmd("$bowtie2_exec --reorder -a -f --rdg 6,5 --rfg 6,5 --score-min L,-0.6,-0.4 --no-unal --threads $alignment_threads -x $file_to_align -U $readset -S $sam 2> $baseout.log >/dev/null" ) unless -s $sam;
    }else{
 	$qformat = '--'.$qformat;
-	&process_cmd("$bowtie2_exec --reorder $qformat -a -q --rdg 6,5 --rfg 6,5 --score-min L,-0.6,-0.4 --no-unal --threads $threads -x $file_to_align -U $readset -S $sam 2> $baseout.log >/dev/null" ) unless -s $sam;
+	&process_cmd("$bowtie2_exec --reorder $qformat -a -q --rdg 6,5 --rfg 6,5 --score-min L,-0.6,-0.4 --no-unal --threads $alignment_threads -x $file_to_align -U $readset -S $sam 2> $baseout.log >/dev/null" ) unless -s $sam;
    }
   }
   else {
-   &process_cmd("$bamtools_exec convert -in $readset -format fastq | $bowtie2_exec --reorder -a --rdg 6,5 --rfg 6,5 --score-min L,-0.6,-0.4 --no-unal -q --threads $threads -x $file_to_align -U - -S $sam 2> $baseout.log"
+   &process_cmd("$bamtools_exec convert -in $readset -format fastq | $bowtie2_exec --reorder -a --rdg 6,5 --rfg 6,5 --score-min L,-0.6,-0.4 --no-unal -q --threads $alignment_threads -x $file_to_align -U - -S $sam 2> $baseout.log"
    ) unless -s "$baseout.log";
   }
  }
@@ -2454,12 +2466,15 @@ sub namesort_sam(){
  warn "No SAM file or not existing: $sam" unless $sam && -s $sam;
  my $out = "$sam.namesorted";
  return $out if -s $out;
+
+ # test if it is a sam; print headers to which we concatanate results later
  &process_cmd("$samtools_exec view -H $sam > $out 2> /dev/null");
- confess "Can't produce $out. Is it a SAM file?\n" unless -s $out;
+ confess "Can't produce $out. Is $sam a SAM file?\n" unless -s $out;
+
  # one thing we have to do is remove reads that have an unmapped mate: this is a requirement for salmon etc
  my $cmd = $perform_bias_correction
-	 ? "$samtools_exec view -F 12 $sam 2> /dev/null| $sort_exec -T $sort_tmp -S $sort_memory_sub -nk4,4|$sort_exec -T $sort_tmp -S $sort_memory_sub -s -k3,3|$sort_exec -T $sort_tmp -S $sort_memory_sub -s -k1,1 >> $out"
-	 : "$samtools_exec view $sam 2> /dev/null| $sort_exec -T $sort_tmp -S $sort_memory_sub -nk4,4|$sort_exec -T $sort_tmp -S $sort_memory_sub -s -k3,3|$sort_exec -T $sort_tmp -S $sort_memory_sub -s -k1,1 >> $out";
+	 ? "$samtools_exec view -q 30 -F 12 $sam 2> /dev/null| $sort_exec -T $sort_tmp -S $sort_memory_sub -nk4,4|$sort_exec -T $sort_tmp -S $sort_memory_sub -s -k3,3|$sort_exec -T $sort_tmp -S $sort_memory_sub -s -k1,1 >> $out"
+	 : "$samtools_exec view -q 30 $sam 2> /dev/null| $sort_exec -T $sort_tmp -S $sort_memory_sub -nk4,4|$sort_exec -T $sort_tmp -S $sort_memory_sub -s -k3,3|$sort_exec -T $sort_tmp -S $sort_memory_sub -s -k1,1 >> $out";
  &process_cmd($cmd);
  unlink($sam);
  chdir($result_dir);
@@ -2529,32 +2544,25 @@ sub align_kanga() {
 #   &process_cmd("$kanga_exec --rptsamseqsthres=5000000 -I $file_to_align.kangax -m 0 $qformat -R 100 -N -r 5 -X -M 5 -U 2 -i $readset -u $readset2 -o $sam -F $sam.log -T $threads -d 50 -D $fragment_max_length >/dev/null"    );
 #   &fix_check_kanga("$sam");
    unless ( -s "$sam.1" ) {
-    &process_cmd(
-"$kanga_exec -I $file_to_align.kangax -m 0 $qformat -R 100 -N -r 5 -X -M 5 -i $readset -o $sam.1 -F $sam.1.log -T 2 -w $sam.sqlite -W $readset >/dev/null"
+    &process_cmd("$kanga_exec -I $file_to_align.kangax -m 0 $qformat -R 100 -N -r 5 -X -M 5 -i $readset -o $sam.1 -F $sam.1.log -T $alignment_threads -w $sam.sqlite -W $readset >/dev/null"
     );
     &fix_check_kanga("$sam.1");
    }
    unless ( -s "$sam.2" ) {
-    &process_cmd(
-"$kanga_exec -I $file_to_align.kangax -m 0 $qformat -R 100 -N -r 5 -X -M 5 -i $readset2 -o $sam.2 -F $sam.2.log -T 2 -w $sam.2.sqlite -W $readset2 >/dev/null"
+    &process_cmd("$kanga_exec -I $file_to_align.kangax -m 0 $qformat -R 100 -N -r 5 -X -M 5 -i $readset2 -o $sam.2 -F $sam.2.log -T $alignment_threads -w $sam.2.sqlite -W $readset2 >/dev/null"
     );
     &fix_check_kanga("$sam.2");
    }
-   &process_cmd(
-"$RealBin/util/merge_left_right_nameSorted_SAMs.pl --left_sam $sam.1 --right_sam $sam.2  -D $fragment_max_length -C 100 > $sam.t"
-   );
+   &process_cmd("$RealBin/util/merge_left_right_nameSorted_SAMs.pl --left_sam $sam.1 --right_sam $sam.2  -D $fragment_max_length -C 100 > $sam.t"   );
    unlink("$sam.1");
    unlink("$sam.2");
-   &process_cmd(
-             "$samtools_exec view -F12 -h -T $file_to_align -o $sam $sam.t");
+   &process_cmd("$samtools_exec view -F12 -h -T $file_to_align -o $sam $sam.t");
    unlink("$sam.t");
   }
   else {
    ## Single END:
    unless ( -s "$sam" ) {
-    &process_cmd(
-"$kanga_exec -I $file_to_align.kangax -m 0 -q 0 -R 100 -N -r 5 -X -M 5 -i $readset -o $sam -F $sam.log -T 2 -w $sam.sqlite -W $readset >/dev/null"
-    );
+    &process_cmd("$kanga_exec -I $file_to_align.kangax -m 0 -q 0 -R 100 -N -r 5 -X -M 5 -i $readset -o $sam -F $sam.log -T $alignment_threads -w $sam.sqlite -W $readset >/dev/null"    );
     &fix_check_kanga("$sam");
    }
   }
@@ -2579,38 +2587,30 @@ sub align_bwa_index(){
 
 sub align_bwa() {
  my ( $baseout, $file_to_align, $readset, $readset2, $bam, $sam ) = @_;
-
- if ( $read_format eq 'fastq' ) {
-  my $qformat = ( &check_fastq_format($readset) eq 'phred33' ) ? ' ' : '-I';
-  
-  &process_cmd("$bwa_exec aln -e -1 -E 6 -q 20 -L $qformat -t 2 -f $baseout.sai $file_to_align $readset 2>/dev/null"  ) unless -s "$baseout.sai";
-  if ($readset2) {
-   &process_cmd("$bwa_exec aln -e -1 -E 6 -q 20 -L $qformat -t 2 -f $baseout.2.sai -q 10 $file_to_align $readset2 2>/dev/null"   ) unless -s "$baseout.2.sai";
-  }
- }
- elsif ( $read_format eq 'bam' ) {
-  &process_cmd("$bwa_exec aln -e -1 -E 6 -q 20 -L -t 2 -b -f $baseout.sai -q 10 $file_to_align $readset 2>/dev/null"  ) unless -s "$baseout.sai";
-  if ($readset2) {
-   &process_cmd("$bwa_exec aln -e -1 -E 6 -q 20 -L -t 2 -b -f $baseout.2.sai -q 10 $file_to_align $readset2 2>/dev/null"   ) unless -s "$baseout.2.sai";
-  }
- }
- 
- confess "Could not produce BWA SAI for $readset\n" unless -s "$baseout.sai";
  my $readgroup = '@RG\tID:' . $readset;
  $readgroup =~ s/\.bz2$//;
  $readgroup =~ s/\.fastq$//;
  $readgroup =~ s/\.bam$//;
- if ($readset2) {
 
-  &process_cmd("$bwa_exec sampe -n 20 -N 100 -a 900 -s -r '$readgroup' $file_to_align $baseout.sai $baseout.2.sai $readset $readset2 > $sam 2>/dev/null"  ) unless -s $sam;
-  unlink("$baseout.sai");
-  unlink("$baseout.2.sai");
+ if ( $read_format eq 'fastq' ) {
+  my $bwa_cmd = "$bwa_exec mem -t $alignment_threads -k 35 -c 100 -E 6,6 -L 3,3 -R '$readgroup' -v 1 -o $sam $file_to_align";
+  $bwa_cmd .=" $readset2 " if $readset2;
+  $bwa_cmd .=" 2>/dev/null ";
+  &process_cmd($bwa_cmd) unless -s $sam;  
+#  &process_cmd("$bwa_exec aln -e -1 -E 6 -q 20 -L $qformat -t 2 -f $baseout.sai $file_to_align $readset 2>/dev/null"  ) unless -s "$baseout.sai";
+#  if ($readset2) {   &process_cmd("$bwa_exec aln -e -1 -E 6 -q 20 -L $qformat -t 2 -f $baseout.2.sai -q 10 $file_to_align $readset2 2>/dev/null"   ) unless -s "$baseout.2.sai";  }
  }
- else {
-  &process_cmd("$bwa_exec samse -n 20 -r '$readgroup' $file_to_align $baseout.sai $readset > $sam 2>/dev/null"  ) unless -s $sam;
-  unlink("$baseout.sai");
+ elsif ( $read_format eq 'bam' ) {
+  if ($readset2) {
+    &process_cmd("$bwa_exec aln -e -1 -E 6 -q 20 -L -t $alignment_threads -b -f $baseout.2.sai -q 10 $file_to_align $readset2 2>/dev/null"   ) unless -s "$baseout.2.sai";
+    &process_cmd("$bwa_exec sampe -n 20 -N 100 -a 900 -s -r '$readgroup' $file_to_align $baseout.sai $baseout.2.sai $readset $readset2 > $sam 2>/dev/null"  ) unless -s $sam;
+  }else{
+    &process_cmd("$bwa_exec aln -e -1 -E 6 -q 20 -L -t $alignment_threads -b -f $baseout.sai -q 10 $file_to_align $readset 2>/dev/null"  ) unless -s "$baseout.sai";
+    &process_cmd("$bwa_exec samse -n 20 -r '$readgroup' $file_to_align $baseout.sai $readset > $sam 2>/dev/null"  ) unless -s $sam;
+  }
  }
-
+ 
+ confess "Could not produce BWA SAI for $readset\n" unless -s $sam;
  &namesort_sam($sam);
 }
 
@@ -2748,7 +2748,7 @@ sub perform_correct_bias() {
 
  if ($genes_that_aligned < 200 || $readset_size < $salmon_min_bias ) {
    warn "Read set size is less than $salmon_min_bias reads or 200 genes, salmon will not perform bias correction\n";
-   $current_salmon_exec .= ' --noLengthCorrection ';
+   $current_salmon_exec .= ' --noLengthCorrection ' if !$is_quantseq;
   }elsif (!$is_quantseq){
 	$current_salmon_exec .= ' --seqBias --posBias --gcBias ';
   }if ($is_quantseq){
@@ -2765,6 +2765,7 @@ sub perform_correct_bias() {
     &process_cmd("$current_salmon_exec --output $salmon_dir --targets $fasta_file --alignments $namesorted_bam > /dev/null 2> $salmon_results.log"
     ) unless -s "$salmon_dir/quant.sf";
     sleep(3);
+    confess "Salmon failed to produce output\n" unless -s "$salmon_dir/quant.sf";
     &process_cmd("$samtools_exec sort -T $sort_tmp -o $salmon_bam_base.bam -@ $samtools_threads -m $sam_sort_memory $salmon_dir/postSample.bam 2>/dev/null");
     rename( "$salmon_dir/quant.sf", $salmon_results );
    }
@@ -2932,7 +2933,7 @@ sub perform_correct_bias() {
    rename( $original_bam . ".bai", $original_bam . '.orig.bai' );
    chdir($result_dir);
    link( fileparse($salmon_bam), fileparse($original_bam) );
-   &process_cmd( "$samtools_exec index " . fileparse($original_bam) );
+   &process_cmd( "$samtools_exec index $original_bam" );
    chdir($cwd);
   }
  }
