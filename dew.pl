@@ -411,6 +411,7 @@ my (
      $init_expression_statistics,
      $add_readset,
      $update_readset,
+     $update_readset_size,
      $add_depth_data,
      $check_depth_data,
      $check_depth_readset,
@@ -639,7 +640,7 @@ sub sqlite_init() {
   $dbh->do("CREATE UNIQUE INDEX expression_statistics_tmp_idx1 ON expression_statistics_tmp(seq_md5hash,readset_id)"  );
 
   # r-tree?
-  $dbh->do(    "CREATE TABLE depth (seq_md5hash char(32), readset_id integer, data blob)");  $dbh->do("CREATE INDEX depth_idx1 ON depth(seq_md5hash,readset_id)");
+  $dbh->do("CREATE TABLE depth (seq_md5hash char(32), readset_id integer, data blob)");  $dbh->do("CREATE INDEX depth_idx1 ON depth(seq_md5hash,readset_id)");
   $dbh->do("CREATE TABLE depth_tmp (seq_md5hash char(32), readset_id integer, data blob)"  );
   $dbh->do("CREATE INDEX depth_tmp_idx1 ON depth_tmp(seq_md5hash,readset_id)");
   $dbh->do("CREATE TABLE kangade_analysis (seq_md5hash char(32), readset1_id INTEGER, readset2_id INTEGER,Classification INTEGER,Score INTEGER,DECntsScore INTEGER,PearsonScore INTEGER,CtrlUniqueLoci INTEGER,"
@@ -755,8 +756,8 @@ sub sqlite_init() {
  my $add_readset = $dbh->prepare(
 "INSERT INTO readsets (readset_file,is_paired,alias,total_reads,readlength_median,ctime) VALUES (?,?,?,?,?,?)"
  );
- my $update_readset = $dbh->prepare(
-               "UPDATE readsets SET is_paired=?, alias=? WHERE readset_file=?");
+ my $update_readset = $dbh->prepare( "UPDATE readsets SET is_paired=?, alias=? WHERE readset_file=?");
+ my $update_readset_size = $dbh->prepare( "UPDATE readsets SET total_reads=? WHERE readset_file=?");
  my $add_sequence_alias = $dbh->prepare(
                "INSERT INTO sequence_aliases (seq_md5hash,alias) VALUES (?,?)");
  my $get_sequence_alias =
@@ -769,6 +770,7 @@ sub sqlite_init() {
           $init_expression_statistics,
           $add_readset,
           $update_readset,
+          $update_readset_size,
           $add_depth_data,
           $check_depth_data,
           $check_depth_readset,
@@ -815,7 +817,7 @@ sub sqlite_set_get_as_housekeeping() {
 
 sub sqlite_destroy() {
  return unless $dbh;
- print &mytime . "Closing SQL connections and backing-up\n";
+ print &mytime() . "Closing SQL connections and backing-up\n";
  $get_readset_filename->finish();
  $get_from_seqdb->finish();
  $get_hash_from_seqdb->finish();
@@ -836,6 +838,7 @@ sub sqlite_destroy() {
  $update_kangade_expression_statistics->finish();
  $add_readset->finish();
  $update_readset->finish();
+ $update_readset_size->finish();
  $get_sequence_alias->finish();
  $add_sequence_alias->finish();
  $add_to_kangade_analysis->finish();
@@ -986,6 +989,12 @@ sub sqlite_get_readset_metadata($) {
  return $result;
 }
 
+sub sqlite_update_readset_size(){
+  my $readset_filename  = shift;
+  my $new_size = shift;
+  $update_readset_size->execute( $new_size ,$readset_filename);
+}
+
 sub sqlite_add_readset_metadata($$$) {
  my $readset_filename  = shift;
  my $lib_alias         = shift;
@@ -1107,8 +1116,7 @@ sub sqlite_add_depth_data($$$) {
  $check_depth_data->execute( $seq_md5hash, $readset_filename );
  undef($result);
  $result = $check_depth_data->fetchrow_arrayref();
- confess "Could not add depth data for $seq_md5hash, $readset_filename "
-   unless $result;
+ confess "Could not add depth data for $seq_md5hash, $readset_filename " unless $result;
 
  #  warn "Adding depth data for $seq_md5hash vs $readset_filename\n" if $debug;
 }
@@ -1139,7 +1147,7 @@ sub sqlite_start_fold_change() {
 }
 
 sub perform_checks_preliminary() {
- print &mytime . "Performing preliminary checks\n";
+ print &mytime() . "Performing preliminary checks\n";
 
  pod2usage "SQLite 3 not found\n" unless $sqlite3_exec;
  pod2usage "BWA not found\n"
@@ -1191,6 +1199,7 @@ sub perform_checks_preliminary() {
  }
  print "Using " . scalar(@readsets) . " readsets\n";
  for ( my $i = 0 ; $i < @readsets ; $i++ ) {
+   next unless $readsets[$i];
   if ( !-s $readsets[$i] && -s $readsets[$i] . '.bam' ) {
    $readsets[$i] .= '.bam';
   }
@@ -1261,7 +1270,7 @@ sub perform_checks_preliminary() {
  mkdir($result_dir) unless -d $result_dir;
  open( LOG, ">>$result_dir/$uid.log" ) || die($!);
  print LOG "#Command: " . $given_cmd . "\n";
- print LOG "#Started: " . &mytime . "\n";
+ print LOG "#Started: " . &mytime() . "\n";
 
  #"express:r-stranded;express:max-read-len 250"
 
@@ -1389,6 +1398,7 @@ sub prepare_library_alias() {
      $library_metadata_headers{ $headers[$i] }++;
     }
    }
+
    if ( !$library_metadata{ $data[1] }{'group'} ) {
     $library_metadata_headers{'group'}++;
     $library_metadata{ $data[1] }{'group'} = $data[1];
@@ -1397,6 +1407,7 @@ sub prepare_library_alias() {
    else {
     $print .= join( "\t", @data ) . "\n";
    }
+
    confess "Readset "
      . $data[1]
      . " has already been linked with group "
@@ -1410,18 +1421,23 @@ sub prepare_library_alias() {
   close IN;
  }
  else {
+  print "Creating a new LIBRARY alias file\n";
   # there is no lib_alias. make one
   $print = "file\tname\tgroup\n";
  }
 
- #some checks if there is a readset without data.
+ #some checks if there is a readset without data. specifically the group
   for (my $r=0;$r<scalar(@readsets);$r++){
    my $readset=$readsets[$r];
+
    if ($library_aliases{ $readset }){
 	$sample_names[$r] = $library_aliases{ $readset };
    }elsif(!$sample_names[$r]){
 	$sample_names[$r] = fileparse($readset);
    }
+   # don't add if already a group
+   next if !$readset; next if ($library_aliases{$readset} && $library_metadata{$sample_names[$r]}{'group'});
+
    $library_aliases{$readset} = $sample_names[$r];
    $library_metadata{$sample_names[$r]}{'group'} = $sample_names[$r];
    $groups_readsets{$library_metadata{$sample_names[$r]}{'group'}}{$sample_names[$r]} =$edgeR_dir . $sample_names[$r] . '.dat';;
@@ -1444,7 +1460,7 @@ sub prepare_input_data() {
 
  &prepare_library_alias();
 
- print &mytime . "Preparing readset metadata tables...\n";
+ print &mytime() . "Preparing readset metadata tables...\n";
  for ( my $i = 0 ; $i < @readsets ; $i++ ) {
   if ( $readsets2[$i] ) {
    my ( $readset_name, $library_size, $do_backup ) =
@@ -1458,7 +1474,7 @@ sub prepare_input_data() {
  &sqlite_backup( 1, $db_file . '.counted_readsets.seed' ) unless $initial_db || -s $db_file . '.counted_readsets.seed';
 
  &sqlite_backup() if !$db_use_file && $do_backup;
- print "\n" . &mytime . "Preparing references...\n";
+ print "\n" . &mytime() . "Preparing references...\n";
 
  # prepare alignment file.
  my $file_to_align = $result_dir . "$uid.toalign";
@@ -1530,7 +1546,7 @@ sub prepare_input_data() {
   close IN;
   print "Found " . scalar( keys %user_alias ) . " unique genes\n";
   unless ($no_checks) {
-   print &mytime . "Checking database tables for each gene...\n";
+   print &mytime() . "Checking database tables for each gene...\n";
    for ( my $i = 0 ; $i < @readsets ; $i++ ) {
     foreach my $seq_md5hash ( keys %user_alias ) {
      &sqlite_init_expression_statistics( $seq_md5hash, $readsets[$i] );
@@ -1578,7 +1594,7 @@ sub prepare_input_data() {
   print CHECK "Done\n";
   close CHECK;
 
-  print &mytime . "Preparing database tables for each gene...\n";
+  print &mytime() . "Preparing database tables for each gene...\n";
   for ( my $i = 0 ; $i < @readsets ; $i++ ) {
    foreach my $seq_md5hash ( keys %user_alias ) {
     &sqlite_init_expression_statistics( $seq_md5hash, $readsets[$i] );
@@ -1691,14 +1707,12 @@ sub starts_alignments() {
    my $alignment_sam_file = $alnbase . '.sam';
 
    if (!$already_done_alignments{$readset} && @use_existing_bam) {    #name or coord sorted
-      #&prepare_alignment_from_existing( $file_to_align, $i,  $baseout, $alignment_bam_file, $alignment_sam_file  );
       my $thread = threads->create('prepare_alignment_from_existing',$file_to_align, $i,  $alnbase, $alignment_bam_file, $alignment_sam_file  );
       $alignment_thread_helper->add_thread($thread);
    }
    else {
     my $thread = threads->create('prepare_alignment',$file_to_align, $i , $alnbase, $alignment_bam_file, $alignment_sam_file );
     $alignment_thread_helper->add_thread($thread);
-#    &prepare_alignment( $file_to_align, $i , $baseout, $alignment_bam_file, $alignment_sam_file );
    }
   }
 
@@ -1706,7 +1720,6 @@ sub starts_alignments() {
   $alignment_thread_helper->wait_for_all_threads_to_complete();
 
   # the following cannot be threaded readily due to DB operations
-
   for ( my $i = 0 ; $i < (@readsets) ; $i++ ) {
 
    my $readset          = $readsets[$i];
@@ -1725,27 +1738,32 @@ sub starts_alignments() {
      # can't thread this as it does DB operations
     &process_salmon_bias( $salmon_results, $readset );
    }else{
-    ($alignment_bam_file, $rpkm_hashref, $eff_counts_hashref ) = &perform_correct_bias( $alignment_bam_file, $file_to_align, $readset, $alignment_bam_file . '.namesorted' )
-      if ($perform_bias_correction);
-    if (-s $alignment_bam_file){
+    if ($perform_bias_correction){
+	my $namesort = -s $alignment_sam_file . '.namesorted' ? $alignment_sam_file . '.namesorted' : $alignment_bam_file . '.namesorted';
+       ($alignment_bam_file, $rpkm_hashref, $eff_counts_hashref ) = &perform_correct_bias( $alignment_bam_file, $file_to_align, $readset, $namesort );
+    }
+    if ($alignment_bam_file && -s $alignment_bam_file){
       &process_alignments( $alignment_bam_file, $readset, $readset2 ) if $readset2;
       &process_alignments( $alignment_bam_file, $readset ) if !$readset2;
     }else{
-	warn "Alignment $alignment_bam_file did not complete. Will skip.\n";
+	warn  "Alignment for $readset did not complete. Will skip.\n";
+	print LOG "Alignment for $readset did not complete. Will skip.\n";
+	delete($library_metadata{$readsets[$i]});
 	delete($readsets[$i]);
+	delete($readsets2[$i]) if $readsets2[$i];
     }
    }
-
  } 
 
   for ( my $i = 0 ; $i < (@readsets) ; $i++ ) {
-   print "    Processing "
+   next unless $readsets[$i];
+
+   print "    Processing Depth of Coverage "
      . ( $i + 1 ) . " of "
      . scalar(@readsets)
      . " readsets                                         \r";
 
    my $readset          = $readsets[$i];
-   next unless $readset;
    my $readset2 = $readsets2[$i] if $readsets2[$i];
    my $readset_basename = fileparse($readset);
    my $alnbase          = $baseout . '_vs_' . $readset_basename;
@@ -1753,9 +1771,8 @@ sub starts_alignments() {
    my $alignment_sam_file = $alnbase . '.sam';
 
    next if $only_alignments || ($resume && -s $alignment_bam_file . ".depth.completed");
-   $aligned_ids_hashref =
-     &process_depth_of_coverage( $file_to_align, $readset,
-                                 $alignment_bam_file );
+
+   $aligned_ids_hashref = &process_depth_of_coverage( $file_to_align, $readset, $alignment_bam_file );
    $alignment_sam_files{$readset} = $alignment_sam_file;
    $alignment_bam_files{$readset} = $alignment_bam_file;
 
@@ -1794,6 +1811,8 @@ sub starts_alignments() {
   open( OUTSEQ, ">$new_file_to_align" );
   my (%unaligned);
   for ( my $i = 0 ; $i < (@readsets) ; $i++ ) {
+   next unless $readsets[$i];
+
    my $file_obj = new Fasta_reader($file_to_align);
    while ( my $seq_obj = $file_obj->next() ) {
     my $id          = $seq_obj->get_accession();
@@ -1836,6 +1855,14 @@ sub starts_alignments() {
 
    ($alignment_bam_file, $rpkm_hashref, $eff_counts_hashref ) = &perform_correct_bias( $alignment_bam_file, $file_to_align, $readset, $alignment_bam_file . '.namesorted' )
    if ($perform_bias_correction);
+
+   if (!$alignment_bam_file || !-s $alignment_bam_file){
+        warn "Alignment for $readset did not complete. Will skip.\n";
+        print LOG "Alignment for $readset did not complete. Will skip.\n";
+	delete($library_metadata{$readsets[$i]});
+        delete($readsets[$i]);
+        delete($readsets2[$i]) if $readsets2[$i];
+    }
 
    &process_alignments( $alignment_bam_file, $readset, $readset2 ) if $readset2;
    &process_alignments( $alignment_bam_file, $readset ) if !$readset2;
@@ -1910,10 +1937,9 @@ sub prepare_alignment_from_existing() {
    unless -s "$alignment_bam_file";
   unless ( -s "$alignment_bam_file.namesorted"){
     # samtools sort -f does'nt work with insuffiecient memory
-    &process_cmd(   "$samtools_exec sort -T $sort_tmp -o $alignment_bam_file.namesorted.bam -n -@ $samtools_threads -m $sam_sort_memory "
-               . $use_existing_bam[$i]
+    &process_cmd(   "$samtools_exec sort -T $sort_tmp -o $alignment_bam_file.namesorted -n -@ $samtools_threads -m $sam_sort_memory "
+               . $use_existing_bam[$i] . " 2>/dev/null"
                 );
-    rename("$alignment_bam_file.namesorted.bam","$alignment_bam_file.namesorted");
   }
   die "Cannot find $alignment_bam_file.namesorted \n" unless -s "$alignment_bam_file.namesorted";
  }
@@ -1945,7 +1971,7 @@ sub perform_alignments() {
  my $readset_time = stat($readset)->mtime;
  die "Cannot get modification time for $readset" unless $readset_time;
  my $readset2_time = $readset2 ? stat($readset2)->mtime : int(0);
- print LOG &mytime . "Processing $readset as $bam\n";
+ print LOG &mytime() . "Processing $readset as $bam\n";
 
  # check if alignments need to be recalculated
  if (
@@ -2003,10 +2029,11 @@ sub process_depth_of_coverage($$$) {
  my $readset       = shift;
  my $bam           = shift;
  return if ( -s $bam . ".depth.completed" && $resume );
+
  my $readset_metadata = &sqlite_get_readset_metadata($readset);
  my $readset_name     = $readset_metadata->{'alias'};
- print LOG &mytime . "Processing $readset_name depth from $bam\n";
- print &mytime . "Processing $readset_name depth from $bam\n";
+ print LOG &mytime() . "Processing $readset_name depth from $bam\n";
+ print &mytime() . "Processing $readset_name depth from $bam\n";
  my $tmp_depth_file = $bam . ".depth";
  &process_cmd("$samtools_exec depth -s -q 10 -Q 30 $bam > $tmp_depth_file 2>/dev/null")
    unless -s $tmp_depth_file;
@@ -2060,10 +2087,12 @@ sub process_depth_of_coverage($$$) {
   &sqlite_add_depth_data( $seq_md5hash, $readset, \%hash );
  }
  close DEPTH;
- unlink($tmp_depth_file) unless $debug;
  open( OUT, ">$bam.depth.completed" );
- print OUT &mytime();
+ print OUT &mytime()."\n";
  close OUT;
+
+
+ unlink($tmp_depth_file) unless $debug;
  return \%aligned_ids;
 }
 
@@ -2089,8 +2118,10 @@ sub perform_kangade() {
    foreach my $id (@reference_sequence_list) {
     my $seq_md5hash = &sqlite_get_md5($id);
     for ( my $i = 0 ; $i < ( scalar(@readsets) - 1 ) ; $i++ ) {
+     next unless $readsets[$i];
      my $readset_C = $readsets[$i];
      for ( my $k = $i + 1 ; $k < scalar(@readsets) ; $k++ ) {
+      next unless $readsets[$k];
       my $readset_E = $readsets[$k];
       my $exists =
         &sqlite_check_kangade_analysis( $seq_md5hash, $readset_C, $readset_E );
@@ -2130,6 +2161,7 @@ sub perform_kangade() {
 # now perform kangade against all data but parse only those that were not stored.
 # i know that is it not the most efficient...
   for ( my $i = 0 ; $i < ( scalar(@readsets) - 1 ) ; $i++ ) {
+   next unless $readsets[$i];
    my $readset_C          = $readsets[$i];
    my $readset_metadata_C = &sqlite_get_readset_metadata($readset_C);
    my $readset_name_C     = $readset_metadata_C->{'alias'};
@@ -2137,6 +2169,7 @@ sub perform_kangade() {
    my $readset_basename_C = fileparse($readset_C);
    print &mytime() . "\tProcessing $readset_name_C\n";
    for ( my $k = $i + 1 ; $k < scalar(@readsets) ; $k++ ) {
+    next unless $readsets[$k];
     my $readset_E          = $readsets[$k];
     my $readset_metadata_E = &sqlite_get_readset_metadata($readset_E);
     my $readset_name_E     = $readset_metadata_E->{'alias'};
@@ -2477,9 +2510,9 @@ sub namesort_sam(){
 	 : "$samtools_exec view -q 30 $sam 2> /dev/null| $sort_exec -T $sort_tmp -S $sort_memory_sub -nk4,4|$sort_exec -T $sort_tmp -S $sort_memory_sub -s -k3,3|$sort_exec -T $sort_tmp -S $sort_memory_sub -s -k1,1 >> $out";
  &process_cmd($cmd);
  unlink($sam);
- chdir($result_dir);
- link( fileparse($out), fileparse($sam));
- chdir("../");
+ #TODO CHECK
+ &process_cmd("ln $out $sam");
+# link( $result_dir.fileparse($out), $result_dir.fileparse($sam));
  return $sam;
 }
 
@@ -2525,9 +2558,8 @@ sub align_kanga_index(){
 sub align_kanga() {
  my ( $baseout, $file_to_align, $readset, $readset2, $bam, $sam ) = @_;
  if ( -s $sam ) {
-  chdir($result_dir);
-  link( fileparse($sam), fileparse($baseout) . ".sam.namesorted" );
-  chdir("../");
+   &process_cmd("ln $sam $baseout.sam.namesorted");
+ # link( $result_dir.fileparse($sam), $result_dir.fileparse($baseout) . ".sam.namesorted" );
   return;
  }
  if ( $read_format eq 'fastq' ) {
@@ -2567,9 +2599,9 @@ sub align_kanga() {
    }
   }
   confess "Alignment for $file_to_align vs $readset failed\n" unless -s $sam;
-  chdir($result_dir);
-  link( fileparse($sam), fileparse($baseout) . ".sam.namesorted" );
-  chdir("../");
+  #TODO CHECK
+  &process_cmd("ln $sam $baseout.sam.namesorted");
+#  link( $result_dir.fileparse($sam), $result_dir.fileparse($baseout) . ".sam.namesorted" );
  }
  else {
   confess "Kanga is currently only supporting FASTQ\n";
@@ -2616,7 +2648,13 @@ sub align_bwa() {
 
 sub process_alignments($) {
  my ( $alignment_bam, $readset, $readset2 ) = @_;
- print &mytime . "Post-processing alignment $readset\n";
+
+ # we assume that if this was done, the data has already gone to the database
+ return if $alignment_bam && -s "$alignment_bam.stats";
+
+ print &mytime() . "Post-processing alignment $readset\n";
+ print LOG &mytime() . "Post-processing alignment $readset\n";
+
  &process_cmd("$samtools_exec index $alignment_bam")
    unless -s $alignment_bam . '.bai';
  confess "File $alignment_bam cannot be indexed"
@@ -2626,9 +2664,13 @@ sub process_alignments($) {
  confess "File $alignment_bam cannot be indexed"
    unless -s $alignment_bam . '.stats';
  my @sizes              = `grep -v '^\*' $alignment_bam.stats`;
- my $reads_that_aligned = `$samtools_exec view -F260 -c $alignment_bam`;
- chomp($reads_that_aligned);
+ my $reads_that_aligned = `$samtools_exec view -F260 -c $alignment_bam`; chomp($reads_that_aligned);
  my $readset_metadata = &sqlite_get_readset_metadata($readset);
+
+ #if genomewide then we want to replace the library size with the reads that aligned
+ if ($genomewide){
+    &sqlite_update_readset_size($readset, $reads_that_aligned);
+ }
 
  foreach my $s (@sizes) {
   next if $s =~ /^\*/;    # unaligned reads
@@ -2660,8 +2702,8 @@ sub process_alignments($) {
                                          $readset_metadata->{'total_reads'}
                                        ) * 100
  );
- print LOG "Reads that aligned: $reads_that_aligned ("
-   . $alignment_proportion . ")\n";
+ print "Reads that aligned for $readset: $reads_that_aligned ($alignment_proportion %)\n";
+ print LOG "Reads that aligned for $readset: $reads_that_aligned ($alignment_proportion %)\n";
 }
 
 sub process_salmon_bias() {
@@ -2693,7 +2735,6 @@ sub process_salmon_bias() {
 }
 
 sub perform_correct_bias() {
- print &mytime   . "salmon: performing Illumina bias and transcript assignment corrections\n";
  my ($original_bam, $fasta_file, $readset, $namesorted_sam )    = @_;
  my $original_bam_base = fileparse($original_bam);
  my $namesorted_bam =
@@ -2710,13 +2751,14 @@ sub perform_correct_bias() {
    return $original_bam;
  }
  
+ print &mytime()   . "salmon: performing Illumina bias and transcript assignment corrections\n";
  warn "Counting output of $original_bam\n" if $debug;
- my $reads_that_aligned = `$samtools_exec view -F260 $original_bam|wc -l` if -s $original_bam;chomp($reads_that_aligned);
+ my $reads_that_aligned = `$samtools_exec view -F260 -c $original_bam` if -s $original_bam;chomp($reads_that_aligned);
  my $genes_that_aligned =  `$samtools_exec view -F260 $original_bam|cut -f 3 |$sort_exec -T $sort_tmp -S $sort_memory_exec -u|wc -l` if -s $original_bam;chomp($genes_that_aligned);
  
  if ( !$reads_that_aligned ) {
-  confess "No reads aligned!";
-  return $original_bam;
+  warn "No reads aligned for $readset!\n";
+  return;
  }
 
 # if we are to allow salmon to do bias-correction then we need at least 200 genes with enough reads (fragments)
@@ -2738,15 +2780,14 @@ sub perform_correct_bias() {
  $current_salmon_exec .= " $salmon_options_single "
    if $salmon_options_single && $single_end_readsets{$readset};
 
- if ($readset_size < 5000000){
+ if ($reads_that_aligned < 5000000){
 	$current_salmon_exec .= " --mappingCacheMemoryLimit $readset_size --numAuxModelSamples " . int($readset_size - ($readset_size*0.1)) ." ";
  }
- if ($readset_size < 2000000){
+ if ($reads_that_aligned < 2000000){
 	$current_salmon_exec .= " --numBiasSamples " . int($readset_size - ($readset_size*0.1)) ." ";
  }
 
-
- if ($genes_that_aligned < 200 || $readset_size < $salmon_min_bias ) {
+ if ($genes_that_aligned < 200 || $reads_that_aligned < $salmon_min_bias ) {
    warn "Read set size is less than $salmon_min_bias reads or 200 genes, salmon will not perform bias correction\n";
    $current_salmon_exec .= ' --noLengthCorrection ' if !$is_quantseq;
   }elsif (!$is_quantseq){
@@ -2759,10 +2800,9 @@ sub perform_correct_bias() {
  unless ( -s $salmon_results ) {
   mkdir($salmon_dir) unless -d $salmon_dir;
   if ($use_bwa) {
-   &process_cmd("$samtools_exec sort -T $sort_tmp -o $namesorted_sam.bam -@ $samtools_threads -n -m $sam_sort_memory $original_bam  2>/dev/null"
-   ) unless -s $namesorted_bam;
+   #&process_cmd("$samtools_exec sort -T $sort_tmp -o $namesorted_bam -@ $samtools_threads -n -m $sam_sort_memory $original_bam  2>/dev/null"   ) unless -s $namesorted_bam;
    if ($contextual_alignment) {
-    &process_cmd("$current_salmon_exec --output $salmon_dir --targets $fasta_file --alignments $namesorted_bam > /dev/null 2> $salmon_results.log"
+    &process_cmd("$current_salmon_exec --output $salmon_dir --targets $fasta_file --alignments $namesorted_sam > /dev/null 2> $salmon_results.log"
     ) unless -s "$salmon_dir/quant.sf";
     sleep(3);
     confess "Salmon failed to produce output\n" unless -s "$salmon_dir/quant.sf";
@@ -2931,10 +2971,10 @@ sub perform_correct_bias() {
    unlink( $original_bam . '.orig' ) if -s $original_bam;
    rename( $original_bam,          $original_bam . '.orig' );
    rename( $original_bam . ".bai", $original_bam . '.orig.bai' );
-   chdir($result_dir);
-   link( fileparse($salmon_bam), fileparse($original_bam) );
+   #TODO CHECK
+   &process_cmd("ln $salmon_bam $original_bam");
+   #link( $result_dir.fileparse($salmon_bam), $result_dir.fileparse($original_bam) );
    &process_cmd( "$samtools_exec index $original_bam" );
-   chdir($cwd);
   }
  }
  &process_salmon_bias( $salmon_results, $readset );
@@ -2952,12 +2992,11 @@ sub perform_stats() {
   print "\n" . &mytime() . "Calculating per gene stats in $result_dir \n";
   print LOG &mytime() . "Calculating per gene stats in $result_dir \n";
  }
- open( STATS,       ">$result_dir/$uid.raw_stats.tsv" )   || die($!);
- open( STATS_RATIO, ">$result_dir/$uid.ratio.stats.tsv" ) || die($!);
+ open( STATS,        ">$result_dir/$uid.raw_stats.tsv" )   || die($!);
+ open( STATS_RATIO,  ">$result_dir/$uid.ratio.stats.tsv" ) || die($!);
  print STATS_RATIO   "Checksum\tGene alias\tReadset1\tReadset2\tRaw RPKM\tKANGADE";
- print STATS_RATIO   "\tSalmon-corrected TPM\tsalmon-corrected counts"
-   if $perform_bias_correction;
- print STATS_RATIO "\n";
+ print STATS_RATIO   "\tSalmon-corrected TPM\tsalmon-corrected counts" if $perform_bias_correction;
+ print STATS_RATIO   "\n";
  print STATS "Checksum\tReadset\tGene alias\tRaw RPKM\tMean\tstd. dev\tMedian\tUpper limit\tTotal hits\tGene coverage\n";
  my $timer_counter = int(0);
  my $timer         = new Time::Progress;
@@ -2978,10 +3017,10 @@ sub get_all_expression_data() {
   my $seq_id   = $user_alias{$seq_md5hash}{'id'};
   my $seq_size = $user_alias{$seq_md5hash}{'length'};
   for ( my $i = 0 ; $i < scalar(@readsets) ; $i++ ) {
+   next  if !$readsets[$i];
    my $readset_metadata_ref = &sqlite_get_readset_metadata( $readsets[$i] );
    my $readset_name         = $readset_metadata_ref->{'alias'};
-   my $stats_ref =
-     &sqlite_get_expression_statistics( $seq_md5hash, $readsets[$i] );
+   my $stats_ref = &sqlite_get_expression_statistics( $seq_md5hash, $readsets[$i] );
    my $total_aligned_reads =
      $stats_ref->{'total_aligned_reads'} ? $stats_ref->{'total_aligned_reads'} : int(0);
    my $depth_hash_ref =
@@ -2990,9 +3029,8 @@ sub get_all_expression_data() {
    my $gene_length_coverage_mean = $stats_ref->{'gene_length_coverage_mean'};
    my $gene_length_coverage = $stats_ref->{'gene_length_coverage'};
    if ( !$depth_hash_ref ) {
-    warn "No depth data for $seq_id vs $readset_name. Skipping\n"
-      if $debug;
-    print LOG "No depth data for $seq_id vs $readset_name. Skipping\n";
+    warn "$readset_name: No depth data for $seq_id vs $readset_name. Skipping\n" if $debug;
+    print LOG "$readset_name: No depth data for $seq_id vs $readset_name. Skipping\n" if $debug;
     next;
    }
    $expression_coverage_stats_hash{$seq_md5hash}{ $readsets[$i] } = {
@@ -3032,8 +3070,7 @@ sub perform_coverage_graphs() {
  my @ids_to_do;
 
  foreach my $seq_md5hash ( keys %user_alias ) {
-  my $imagefile =
-    "$result_dir/gene_coverage_plots/$seq_md5hash" . "_gene_coverage.svg";
+  my $imagefile = "$result_dir/gene_coverage_plots/$seq_md5hash" . "_gene_coverage.svg";
   next if -s $imagefile;
   $timer_counter++;
   if ( $timer_counter % 100 == 0 && @ids_to_do ) {
@@ -3124,7 +3161,9 @@ sub make_coverage_graph($$$) {
  # find out if the graph is to be printed at all
  my $gene_has_been_printed_before;
  unless ($never_skip) {
-  foreach my $readset (@readsets) {
+  for (my $i=0;$i<scalar(@readsets);$i++) {
+   next unless $readsets[$i];
+   my $readset = $readsets[$i];
    my $ref = $memory_hash_ref->{$readset};
 
    next
@@ -3138,10 +3177,14 @@ sub make_coverage_graph($$$) {
   }
  }
 
- foreach my $readset (@readsets) {
+ for (my $i=0;$i<scalar(@readsets);$i++) {
+  next unless $readsets[$i];
+  my $readset = $readsets[$i];
   my $ref          = $memory_hash_ref->{$readset};
   my $readset_name = $library_aliases{$readset};
 
+  next unless $ref && $ref->{'expression'};;
+  
   my $expression_statistics_ref = $ref->{'expression'};
   confess "Cannot find any coverage statistics for $seq_id vs $readset !\n"
     unless $expression_statistics_ref;
@@ -3290,22 +3333,22 @@ sub process_main_stats($) {
  $demand_all_readsets = scalar @readsets if $demand_all_readsets;
 
  for ( my $i = 0 ; $i < scalar(@readsets) ; $i++ ) {
+  next if !$readsets[$i];
+
   my $readset_metadata_ref = &sqlite_get_readset_metadata( $readsets[$i] );
   my $readset_name         = $readset_metadata_ref->{'alias'};
+
   my $gene_length_coverage_stat             = Statistics::Descriptive::Full->new();
-  my $stats_ref =
-    &sqlite_get_expression_statistics( $seq_md5hash, $readsets[$i] );
+  my $stats_ref = &sqlite_get_expression_statistics( $seq_md5hash, $readsets[$i] );
   my $rpkm = $stats_ref->{'rpkm'} ? $stats_ref->{'rpkm'} : int(0);
-  my $total_aligned_reads =
-    $stats_ref->{'total_aligned_reads'} ? $stats_ref->{'total_aligned_reads'} : int(0);
+  my $total_aligned_reads = $stats_ref->{'total_aligned_reads'} ? $stats_ref->{'total_aligned_reads'} : int(0);
   my ( $no_bp_covered, @gene_length_coverages );
-  my $depth_hash_ref_compressed =
-    &sqlite_get_depth_data( $seq_md5hash, $readsets[$i], 1 );
+  my $depth_hash_ref_compressed = &sqlite_get_depth_data( $seq_md5hash, $readsets[$i], 1 );
 
   if ( !$depth_hash_ref_compressed ) {
    warn "No depth data for $seq_id vs $readset_name. Skipping\n"
      if $debug;
-   print LOG "No depth data for $seq_id vs $readset_name. Skipping\n";
+   print LOG "No depth data for $seq_id vs $readset_name. Skipping\n" if $debug;
    next;
   }
   my $depth_hash_ref = &thaw_decompress($depth_hash_ref_compressed);
@@ -3321,7 +3364,7 @@ sub process_main_stats($) {
   }
   $gene_length_coverage_stat->add_data( \@gene_length_coverages );
  
- my $gene_length_coverage_median = $gene_length_coverage_stat->median() ? $gene_length_coverage_stat->median() : int(0);
+  my $gene_length_coverage_median = $gene_length_coverage_stat->median() ? $gene_length_coverage_stat->median() : int(0);
   my $gene_length_coverage_sd =    $gene_length_coverage_stat->standard_deviation()
     ? sprintf( "%.2f", $gene_length_coverage_stat->standard_deviation() )
     : int(0);
@@ -3358,11 +3401,9 @@ sub process_main_stats($) {
  if ( $readsets_covered == 0
       || ( $demand_all_readsets && $readsets_covered < $demand_all_readsets ) )
  {
-  warn
-"Skipping $seq_id as it didn't align to sufficient readsets ($readsets_covered)\n"
+  warn "Skipping $seq_id as it didn't align to sufficient readsets ($readsets_covered)\n"
     if $debug;
-  print LOG
-"Skipping $seq_id as it didn't align to sufficient readsets ($readsets_covered)\n";
+  print LOG "Skipping $seq_id as it didn't align to sufficient readsets ($readsets_covered)\n";
   $skipped_references{$seq_md5hash} = 1;
   return;
  }
@@ -3389,10 +3430,8 @@ sub print_binary_table() {
    #    || ( $process_cutoff && $gene_length_coverage_mean < $process_cutoff )
     )
   {
-   print LOG
-"Gene coverage of $seq_id vs $readset_name was not available or was zero ($gene_length_coverage). Skipping\n";
-   warn
-"Gene coverage of $seq_id vs $readset_name was not available or was zero ($gene_length_coverage). Skipping\n"
+   print LOG "Gene coverage of $seq_id vs $readset_name was not available or was zero ($gene_length_coverage). Skipping\n";
+   warn "Gene coverage of $seq_id vs $readset_name was not available or was zero ($gene_length_coverage). Skipping\n"
      if $debug;
    next;
   }
@@ -3444,6 +3483,7 @@ sub process_expression_level() {
  my $count_matrix_print = "transcript\t";
 
  for ( my $i = 0 ; $i < scalar(@readsets) ; $i++ ) {
+  next  if !$readsets[$i];
   my $readset_metadata = &sqlite_get_readset_metadata( $readsets[$i] );
   $count_matrix_print .= $readset_metadata->{'alias'} . "\t";
  }
@@ -3458,10 +3498,11 @@ sub process_expression_level() {
   $count_matrix_print     = $seq_md5hash . "\t";
   $effective_matrix_print = $seq_md5hash . "\t";
   for ( my $i = 0 ; $i < scalar(@readsets) ; $i++ ) {
+   next  if !$readsets[$i];
    my $readset_metadata_C = &sqlite_get_readset_metadata( $readsets[$i] );
    my $readset_name_C     = $readset_metadata_C->{'alias'};
    my $stats_ref_C =  &sqlite_get_expression_statistics( $seq_md5hash, $readsets[$i] );
-#die Dumper  $stats_ref_C;
+
    $stats_ref_C->{'total_aligned_reads'}   = int(0) if !$stats_ref_C->{'total_aligned_reads'};
    $stats_ref_C->{'salmon_eff_counts'} = int(0) if !$stats_ref_C->{'salmon_eff_counts'};
    $stats_ref_C->{'salmon_tpm'} = int(0) if !$stats_ref_C->{'salmon_tpm'};
@@ -3650,7 +3691,7 @@ sub process_completion() {
  my $elapsed = $total_timer->report("%L");
  print "\nCompleted in $elapsed!\n";
  print LOG "\nCompleted in $elapsed!\n";
- print LOG "#Ended: " . &mytime . "\n";
+ print LOG "#Ended: " . &mytime() . "\n";
  close LOG;
  &sqlite_destroy();
  ## cleanup
@@ -4617,8 +4658,8 @@ sub rename_graph_files_md52gene() {
  }
  @files = ();
  if ( !$no_pdf && $convert_imagemagick_exec && -x $convert_imagemagick_exec ) {
-  print &mytime . "Creating PDF for $dir using imagemagick\n";
-  print LOG &mytime . "Creating PDF for $dir using imagemagick\n";
+  print &mytime() . "Creating PDF for $dir using imagemagick\n";
+  print LOG &mytime() . "Creating PDF for $dir using imagemagick\n";
   chdir( $dir . "/gene_names" );
   my $outdir = "PDF";
   mkdir $outdir unless -d $outdir;
