@@ -253,6 +253,8 @@ my (
                              'bwa',     'salmon',  'bedtools', 'sort'
   );
 
+$convert_imagemagick_exec .= " -limit disk 5gb " if $convert_imagemagick_exec;
+
 if ($ps2pdf_exec) {
  $ps2pdf_exec .=
    " -sPAPERSIZE=a0 -dNOPAUSE -dBATCH -sDEVICE=pdfwrite -q -sOutputFile=";
@@ -2625,7 +2627,7 @@ sub align_bwa() {
  $readgroup =~ s/\.bam$//;
 
  if ( $read_format eq 'fastq' ) {
-  my $bwa_cmd = "$bwa_exec mem -t $alignment_threads -k 35 -c 100 -E 6,6 -L 3,3 -R '$readgroup' -v 1 -o $sam $file_to_align";
+  my $bwa_cmd = "$bwa_exec mem -t $alignment_threads -k 35 -c 100 -E 6,6 -L 3,3 -R '$readgroup' -v 1 -o $sam $file_to_align $readset";
   $bwa_cmd .=" $readset2 " if $readset2;
   $bwa_cmd .=" 2>/dev/null ";
   &process_cmd($bwa_cmd) unless -s $sam;  
