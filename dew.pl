@@ -98,16 +98,18 @@ test times:
 
  Optional:
 
+ * => Recommended
+
             -output or -uid    :s   => A uid for naming output files. Optional, otherwise generate
-            -threads :i             => Number of CPUs to use for alignment. BWA has no advantage over 4 threads
-            -library_name_file :s   => An tag value tab delimited file for giving a friendly alias for each readset library. Needs a header line to describe columns ("file" and "name" in that order). Only include -1read files.
+         *  -threads :i             => Number of CPUs to use for alignment. BWA has no advantage over 4 threads
+         *  -library_name_file :s   => An tag value tab delimited file for giving a friendly alias for each readset library. Needs a header line to describe columns ("file" and "name" in that order). Only include -1read files.
 	    -sample_names    :s{,}  => A list of names to assign to the samples. Only if a -library_name_file is not provided. Must be same order/number as -readsets
             -need_all_readsets      => All sets of reads must have alignments against the gene in order for it to be processed. Otherwise, 1+ is sufficient. 
             -over                   => Allow overwriting of any files with the same name
             -nographs               => Do not produce any graphs. Graphs can take a very long time when there are many readsets (e.g. 30+ libraries and 30k+ genes).
             -gene_coverage_graph    => Only do enough work to get the gene depth/coverage graphs and then exit. No expression boxplots
             -no_js_graphs           => If producing edgeR graphs, then don't produce javascript based graphs.
-            -contextual             => Complete realignment of all genes in order to run a correction of biases properly. Does not read/store data in the cache
+         *  -contextual             => Complete realignment of all genes in order to run a correction of biases properly. Does not read/store data in the cache
             -use_bwa                => Use BWA instead of Bowtie2. Much slower.
             -prepare_only           => Quit after post-processing readsets and writing initial DB
             -seeddb :s              => Initialize database using this database file (e.g. after -prepare_only)
@@ -124,27 +126,29 @@ test times:
             -binary_min_coverage :f => Minimum gene (length) coverage (0.00 ~ 1.00) for counting a gene as a expressed or not (def. 0.3)
             -binary_min_reads :i    => Minimum number of aligned reads for counting a gene as a expressed or not (def. 4)
             -never_skip             => Always process graph for gene/readset pair, regardless of cutoffs
-            -sort_memory_gb :i      => Max memory (in Gb) to use for sorting (def 10). Make sure this is less than the available/requested RAM
-            -remove_redund          => Remove redundant sequences (identical) in -infile
+         *  -sort_memory_gb :i      => Max memory (in Gb) to use for sorting (def 10). Make sure this is less than the available/requested RAM
+         *  -remove_redund          => Remove redundant sequences (identical) in -infile
             -only_alignments        => Stop after all alignments are completed. Good for large data/alignments and HPC environments. Use without -contextual (and use with -nographs). 
             -cleanup                => Delete alignments after successful completion
-            -no_pairwise            => Do not do pairwise comparisons (kangade and edgeR). Otherwise, this can be VERY memory intense for genomewide for many (20+) libraries (160Gb)
+         *  -no_pairwise            => Do not do pairwise comparisons (kangade and edgeR). Otherwise, this can be VERY memory intense for genomewide for many (20+) libraries (160Gb)
             -no_check               => When re-starting, do not check database if every gene has been stored. Do not use if you're adding new genes or database was incomplete (it will crash later), but use if you're restarting and have lots of genes.
             -verbose                => Print on the screen any system commands that are run. Caution, that will produce a lot of output on the screen they are kept in the .log file anyway).
             -no_pdf                 => Do not convert gene coverage/expression images to multi-page PDF. Otherwise, will print a PDF for every 500 genes per PDF (slow for large genomes & dozens of readsets)
-	    -sort_tmp :s	    => Temporary directory to use for sorting files. It will need to be on a fast disk that has sufficient free space (depends on number of -threads)
+	 *  -sort_tmp :s	    => Temporary directory to use for sorting files. It will need to be on a fast disk that has sufficient free space (depends on number of -threads)
+         *  -isoforms               => Use salmon to correct Illumina sequencing biases and transcript isofrm assignments. Increases runtime. Use -contextual for accuracy 
+         *  -genomewide             => Your input provides all the genes of the genome, i.e. expecting to have all reads in the readset aligning. This influences salmon only. Probably needed for genomewide analyses that have readsets with large amount of non coding sequence (e.g. rDNA). Also stores data in database cache
+	    -is_quantseq	    => Tell the program that you've sequenced only the end(s) of the genes (3' UTR sequencing)
 
  Salmon options:
 
-            -isoforms               => Use salmon to correct Illumina sequencing biases and transcript isofrm assignments. Increases runtime. Use -contextual for accuracy 
-            -genomewide             => Your input provides all the genes of the genome, i.e. expecting to have all reads in the readset aligning. This influences salmon only. Probably needed for genomewide analyses that have readsets with large amount of non coding sequence (e.g. rDNA). Also stores data in database cache
             -extra_options :s       => Extra options for e.g. salmon, exclude any initial --dashes from the salmon options (eg give as "salmon:minAssignedFrags 5;salmon:noLengthCorrection;salmon:libType SF", including the "quotes" ). I highly recommend you include the salmon:libType
             -readset_separation     => Expected insert size for Salmon (approximately). Defaults to 500.
-	    -is_quantseq	    => Tell the program that you've sequenced only the end(s) of the genes
 
 
-NB: I highly recommend you use either the latest version of Bowtie (2.1.0+) or Kanga for alignments (-kanga). I often had issues with Bowtie2 (2.0.5-) on NFS and High Perfomance Computing... Kanga is faster than Bowtie2 but my post-processing makes the whole process a lot slower
-        
+ NB: if you are using an NFS, you can run -prepare_only on a fast server to prepare the database, then restart with -resume -no_check -over
+ 
+ NB2: I normally use -contextual -isoforms -genomewide -remove_redund -no_pairwise for genome-wide analyses
+
 =head1 FAQ on errors
 
 1. I get this error:
@@ -373,7 +377,7 @@ my $sort_memory_exec = $sort_memory;
 my $sort_memory_sub = int($sort_memory/3).'b';
 my $sort_version = `sort --version|head -1`;
 if ($sort_version=~/^sort \(GNU coreutils\) (\d+)/){
-   my $sort_threads = $threads > 5 ? 5 : 5;
+   my $sort_threads = $threads >= 4 ? 4 : 2; #same as alignment
    # for pipelines
    my $sort_threads_sub = int($threads / 3);
    $sort_threads_sub = $sort_threads_sub > 5 ? 5 : 5;
@@ -382,12 +386,14 @@ if ($sort_version=~/^sort \(GNU coreutils\) (\d+)/){
 }
 mkdir($sort_tmp) if !-d $sort_tmp;
 
-# parallelise alignments; each alignment uses 4 threads
-my $alignment_threads = 4;
-my $alignment_helper_threads = int($threads/$alignment_threads) > 0 ? int($threads/$alignment_threads) : 1;
+# parallelise alignments; each alignment uses 4 threads, or 2 if less available
+my $alignment_threads = $threads >= 4 ? 4 : 2; 
+my $alignnent_parallel = int($threads/$alignment_threads) - 1;
+my $alignment_helper_threads = $alignnent_parallel > 0
+ ? $alignnent_parallel : 1;
 my $alignment_thread_helper = new Thread_helper($alignment_helper_threads);
 
-my $samtools_threads = $threads > 5 ? 5 : $threads;
+my $samtools_threads = $threads >= 4 ? 4 : 2; # same as alignment
 my $sam_sort_memory = int($sort_memory / $samtools_threads); 
 my ( $extra_salmon, %single_end_readsets, $salmon_options_single );
 my $kanga_threads = $threads <= 8 ? $threads : 10;
@@ -1334,6 +1340,7 @@ sub perform_checks_preliminary() {
 
 sub prepare_library_alias() {
 
+
  # these are currently not stored in the database
  my ( %library_metadata_headers, $print );
  if ( $lib_alias_file && -s $lib_alias_file ) {
@@ -1716,6 +1723,7 @@ sub starts_alignments() {
     my $thread = threads->create('prepare_alignment',$file_to_align, $i , $alnbase, $alignment_bam_file, $alignment_sam_file );
     $alignment_thread_helper->add_thread($thread);
    }
+   sleep(1);
   }
 
   # All alignments are done but they have not been processed yet.
@@ -1756,7 +1764,7 @@ sub starts_alignments() {
     }
    }
  } 
-
+#end contextual alignment
   for ( my $i = 0 ; $i < (@readsets) ; $i++ ) {
    next unless $readsets[$i];
 
@@ -4811,6 +4819,7 @@ sub remove_redundant_sequences() {
   print OUT $redundant{$seq} . "\t$seq\n";
  }
  close OUT;
+ undef %hash; undef %redundant;
  print "Excluded $count identical sequences from $file\n";
  return "$file.noredundant.fsa";
 }
