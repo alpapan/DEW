@@ -29,7 +29,7 @@ Speed up graph making by using memory (parallelizing doesn't work)
  created server to run these things on
  Added kangade
  added fpkm via express - removed it in favour of salmon
- added bowtie2; made it the default; accepts fastq.bz2
+ added bowtie2; made it the default; accepts fastq.bz2 and gz
  when not in contextual alignment, salmon processes each reference sequence separately (yes, it is incorrect but db results would be incorrect otherwise and are getting the fpkm...)
  added edgeR
  added html5 interactive heatmap and scatterplot
@@ -84,7 +84,7 @@ test times:
 
             -infile :s              => Reference file of genes
             -sequence :s            => Instead of a file, provide a single sequence (in FASTA format with \n as line separator);
-            -format :s              => The reads can be in BAM or FASTQ format. FASTQ can be .bz2 if bowtie2 is used
+            -format :s              => The reads can be in BAM or FASTQ format. With bowtie2, FASTQ can be .bz2 or .gz
             -1read|readset1|r :s{1,}=> Sets of files (one per library). Tested with Phred33 FASTQ format
             -2read|readset2: s{1,}  => If provided, do paired end alignment. Sets of paired right files (synced to readset1). Optional.
 
@@ -141,7 +141,7 @@ test times:
 
  Salmon options:
 
-            -extra_options :s       => Extra options for e.g. salmon, exclude any initial --dashes from the salmon options (eg give as "salmon:minAssignedFrags 5;salmon:noLengthCorrection;salmon:libType SF", including the "quotes" ). I highly recommend you include the salmon:libType
+            -extra_options :s       => Extra options for e.g. salmon, exclude any initial --dashes from the salmon options (eg for QuantSeq give as "salmon:minAssignedFrags 5;salmon:noLengthCorrection;salmon:libType SF", including the "quotes" ). I highly recommend you include the salmon:libType (ISR for typical Illumina, if nothing given then set to Auto)
             -readset_separation     => Expected insert size for Salmon (approximately). Defaults to 500.
 
 
@@ -366,6 +366,7 @@ die
   unless $binary_min_coverage > 0 && $binary_min_coverage <= 1;
 $threads = 2 if $threads < 2;    # no idea what happens with a single thread
 my ($bunzip2_exec) = &check_program_optional('pbzip2');
+my ($gunzip_exec) = &check_program_optional('pigz');
 my $bunzip_threads = $threads <= 6 ? $threads : 6;
 $bunzip2_exec .= " -p$bunzip_threads " if $bunzip2_exec;
 ($bunzip2_exec) = &check_program('bzip2') if !$bunzip2_exec;
@@ -1282,7 +1283,7 @@ sub perform_checks_preliminary() {
 
  #"express:r-stranded;express:max-read-len 250"
 
- my $is_lib_provided; # to add ' --libType a ';
+ my $is_lib_provided;
 
  if ($extra_options) {
   my @opt1 = split( ';', $extra_options );
@@ -1603,18 +1604,21 @@ sub prepare_input_data() {
   print CHECK "Done\n";
   close CHECK;
 
-  print &mytime() . "Preparing database tables for each gene...\n";
-  for ( my $i = 0 ; $i < @readsets ; $i++ ) {
-   foreach my $seq_md5hash ( keys %user_alias ) {
-    &sqlite_init_expression_statistics( $seq_md5hash, $readsets[$i] );
-    for ( my $k = $i + 1 ; $k < scalar(@readsets) ; $k++ ) {
-     next if $readsets[$i] eq $readsets[$k];
-     &sqlite_start_fold_change( $seq_md5hash, $readsets[$i], $readsets[$k] );
+  unless ($no_checks) {
+    print &mytime() . "Preparing database tables for each gene...\n";
+    for ( my $i = 0 ; $i < @readsets ; $i++ ) {
+     foreach my $seq_md5hash ( keys %user_alias ) {
+      &sqlite_init_expression_statistics( $seq_md5hash, $readsets[$i] );
+      for ( my $k = $i + 1 ; $k < scalar(@readsets) ; $k++ ) {
+       next if $readsets[$i] eq $readsets[$k];
+       &sqlite_start_fold_change( $seq_md5hash, $readsets[$i], $readsets[$k] );
+      }
+     }
     }
-   }
+    &sqlite_backup(1) if !$db_use_file && $do_backup;
   }
-  &sqlite_backup(1) if !$db_use_file && $do_backup;
  }
+
 
  if ($prepare_input_only) {
   warn "User requested to stop after preparing files\n";
@@ -2356,6 +2360,7 @@ sub perform_readset_metadata($$) {
 
   return ( $result->{'alias'}, $result->{'total_reads'}, $do_backup );
  }
+
  $do_backup = 1;
  print "Counting reads in PE readsets $readset / $readset2\n" if $readset2;
  print "Counting reads in SE readset $readset\n"              if !$readset2;
@@ -2366,6 +2371,12 @@ sub perform_readset_metadata($$) {
    $library_size = `$bunzip2_exec -dck $readset| wc -l `;
    chomp($library_size);
    $library_size += `$bunzip2_exec -dck $readset2| wc -l `
+     if $readset2;
+  }
+  elsif ( $readset =~ /.gz$/ ) {
+   $library_size = `$gunzip_exec -dck $readset| wc -l `;
+   chomp($library_size);
+   $library_size += `$gunzip_exec -dck $readset2| wc -l `
      if $readset2;
   }
   else {
@@ -4617,6 +4628,9 @@ sub check_fastq_format() {
  my ( @lines, $number, $counter );
  if ( $fq =~ /.bz2$/ ) {
   @lines = `$bunzip2_exec -dkc $fq|head -n $max_lines`;
+ }
+ elsif ( $fq =~ /.gz$/ ) {
+  @lines = `$gunzip_exec -dkc $fq|head -n $max_lines`;
  }
  else {
   @lines = `head -n $max_lines $fq`;
